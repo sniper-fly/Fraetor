@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 
-from src.config import SSE_KEEPALIVE_SEC
+from src.config import HISTORY_FILE, SSE_KEEPALIVE_SEC
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -66,3 +67,17 @@ async def correction_toggle(request: Request) -> dict[str, bool]:
 async def correction_status(request: Request) -> dict[str, bool]:
     app_state = _get_state(request)
     return {"correction_enabled": app_state.correction_enabled}
+
+
+@router.get("/api/history")
+async def history() -> list[dict[str, object]]:
+    if not HISTORY_FILE.exists():
+        return []
+    text = HISTORY_FILE.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    sessions: list[dict[str, object]] = [
+        json.loads(line) for line in text.splitlines() if line.strip()
+    ]
+    sessions.reverse()
+    return sessions

@@ -105,18 +105,20 @@ let sessionActive = false;
 
 function renderSegments() {
   const container = document.getElementById('segments');
-  const ids = Object.keys(segments).map(Number).sort((a, b) => a - b);
-  if (ids.length === 0) {
+  const keys = Object.keys(segments);
+  if (keys.length === 0) {
     container.innerHTML = '<p class="text-gray-500">待機中...</p>';
     return;
   }
-  container.innerHTML = ids.map(id => {
+  const correctedIds = keys.filter(k => k !== 'interim').map(Number).sort((a, b) => a - b);
+  let html = correctedIds.map(id => {
     const seg = segments[id];
-    if (seg.status === 'interim') {
-      return `<p class="text-gray-400">${escapeHtml(seg.text)} <span class="text-xs">[認識中]</span></p>`;
-    }
     return `<p class="text-green-400">${escapeHtml(seg.text)} <span class="text-xs">&#10003;</span></p>`;
   }).join('');
+  if (segments['interim']) {
+    html += `<p class="text-gray-400">${escapeHtml(segments['interim'].text)} <span class="text-xs">[認識中]</span></p>`;
+  }
+  container.innerHTML = html;
 }
 
 function escapeHtml(text) {
