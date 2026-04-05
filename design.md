@@ -203,3 +203,9 @@ STT_SAMPLE_RATE = 16000              # 音声サンプルレート
 - **校正レベル**: 句読点・記号の追加修正、誤字脱字の修正、不自然な表現の修正、文脈を考慮した自然な文章化
 - **制約**: 校正結果のテキストのみを返す（説明や補足を付けない）
 - **文脈活用**: Live API のセッション内コンテキストにより、前のセグメントを踏まえた校正が可能
+
+## 参考資料
+https://learn.microsoft.com/ja-jp/python/api/azure-cognitiveservices-speech/azure.cognitiveservices.speech?view=azure-python
+azure speech to text sdk は必要に応じてこちらの資料をWebFetchすること
+azureの接続情報は azure_stt_key に記載してある
+gemini 3.1 flash live に関する情報が必要になったら gemini-live-api-dev skillを利用する

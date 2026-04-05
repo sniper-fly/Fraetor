@@ -1,12 +1,7 @@
 # Fraetor 実装 TODO
 
-## 完了
 - [x] Phase 1: プロジェクト基盤 (pyproject.toml, __main__.py, config.py)
-
-## 進行中
-- [ ] Phase 2: FastAPI + ブラウザUI + SSE (app.py, sse.py, routes.py, index.html)
-
-## 未着手
+- [x] Phase 2: FastAPI + ブラウザUI + SSE (app.py, sse.py, routes.py, index.html)
 - [ ] Phase 3: ホットキー + 状態管理 (state.py, hotkey.py, models.py)
 - [ ] Phase 4: 音声キャプチャ + Azure STT (audio.py, stt.py)
 - [ ] Phase 5: セッションマネージャ + SSE統合 (session_manager.py, 3分タイムアウト)
