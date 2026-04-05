@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.audio import AudioCapture
+from src.clipboard import copy_and_paste
 from src.config import MAX_SESSION_DURATION_SEC
 from src.models import Segment, Session
 from src.stt import AzureSttClient
@@ -104,6 +105,11 @@ class SessionManager:
         if session:
             session.ended_at = datetime.now(tz=UTC)
             session.timed_out = timed_out
+            if session.full_text:
+                try:
+                    await copy_and_paste(session.full_text)
+                except Exception:
+                    logger.exception("Failed to copy and paste session text")
 
         self._app_state.current_session = None
 
