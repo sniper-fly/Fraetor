@@ -194,7 +194,7 @@ STT_SAMPLE_RATE = 16000              # 音声サンプルレート
 | 対応環境 | Linux X11（必須）、Wayland（将来対応） |
 | 権限 | ユーザーを `input` グループに追加（evdev 用） |
 | 外部サービス | Azure Speech Services アカウント、Google AI (Gemini) API キー |
-| 認証情報管理 | 環境変数 (`AZURE_SPEECH_KEY`, `GEMINI_API_KEY`) |
+| 認証情報管理 | `pass` コマンド (エントリ: `api/azure_stt_key`, `api/gemini`)。起動時に1回取得 |
 | パッケージ管理 | uv (pyproject.toml + uv.lock) |
 | 設定ファイル | ホットキー割り当て、各種タイムアウト等は定数で管理 |
 

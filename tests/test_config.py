@@ -1,11 +1,51 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import subprocess
+from unittest.mock import MagicMock
 
-from src.config import validate_api_keys
+import pytest
 
-if TYPE_CHECKING:
-    import pytest
+from src import config
+from src.config import init_secrets, validate_api_keys
+
+
+class TestInitSecrets:
+    def test_sets_keys_from_pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """passコマンドの出力がモジュール変数に設定される。"""
+        pass_values = {
+            "api/azure_stt_key": "test-azure-key",
+            "api/gemini": "test-gemini-key",
+        }
+
+        def fake_run(
+            cmd: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            entry = cmd[2]
+            return subprocess.CompletedProcess(
+                cmd, returncode=0, stdout=f"{pass_values[entry]}\n", stderr=""
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        init_secrets()
+
+        assert config.AZURE_SPEECH_KEY == "test-azure-key"
+        assert config.GEMINI_API_KEY == "test-gemini-key"
+
+    def test_raises_on_pass_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """passコマンド失敗時にRuntimeErrorが発生する。"""
+        failed = subprocess.CompletedProcess(
+            ["pass", "show", "api/azure_stt_key"],
+            returncode=1,
+            stdout="",
+            stderr="entry not found",
+        )
+        monkeypatch.setattr(subprocess, "run", MagicMock(return_value=failed))
+
+        with pytest.raises(
+            RuntimeError, match="pass show api/azure_stt_key に失敗しました"
+        ):
+            init_secrets()
 
 
 class TestValidateApiKeys:

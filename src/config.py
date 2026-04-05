@@ -1,4 +1,4 @@
-import os
+import subprocess
 from pathlib import Path
 
 # --- セッション ---
@@ -21,9 +21,37 @@ SERVER_PORT: int = 8765
 # --- SSE ---
 SSE_KEEPALIVE_SEC: int = 15
 
-# --- 環境変数 ---
-AZURE_SPEECH_KEY: str = os.environ.get("AZURE_SPEECH_KEY", "")
-GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
+# --- シークレット (init_secrets() で設定) ---
+AZURE_SPEECH_KEY: str = ""
+GEMINI_API_KEY: str = ""
+
+# --- pass エントリパス ---
+_PASS_ENTRIES: dict[str, str] = {
+    "AZURE_SPEECH_KEY": "api/azure_stt_key",
+    "GEMINI_API_KEY": "api/gemini",
+}
+
+
+def _read_pass(entry: str) -> str:
+    """passコマンドからシークレットを取得する。"""
+    result = subprocess.run(  # noqa: S603
+        ["pass", "show", entry],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        msg = f"pass show {entry} に失敗しました: {result.stderr.strip()}"
+        raise RuntimeError(msg)
+    return result.stdout.strip()
+
+
+def init_secrets() -> None:
+    """passコマンドからAPIキーを取得し、モジュール変数に設定する。"""
+    global AZURE_SPEECH_KEY, GEMINI_API_KEY  # noqa: PLW0603
+    AZURE_SPEECH_KEY = _read_pass(_PASS_ENTRIES["AZURE_SPEECH_KEY"])
+    GEMINI_API_KEY = _read_pass(_PASS_ENTRIES["GEMINI_API_KEY"])
+
 
 # --- Gemini ---
 GEMINI_MODEL: str = "gemini-3.1-flash-live-preview"
