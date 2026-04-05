@@ -32,10 +32,12 @@ def _session_to_record(session: Session) -> dict[str, Any]:
     }
 
 
-def save_session(session: Session) -> None:
+def save_session(session: Session, *, text_override: str | None = None) -> None:
     """セッションを JSONL ファイルに追記する。"""
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     record = _session_to_record(session)
+    if text_override is not None:
+        record["text"] = text_override
     with HISTORY_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
     logger.info("Session saved to history: %s", session.id)

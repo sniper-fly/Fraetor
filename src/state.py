@@ -20,3 +20,5 @@ class AppState:
         self.current_session: Session | None = None
         self.correction_enabled: bool = True
         self.recording: bool = False
+        self.paste_enabled: bool = False
+        self.pending_session: Session | None = None

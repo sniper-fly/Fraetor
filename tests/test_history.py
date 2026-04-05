@@ -157,3 +157,31 @@ class TestSaveSession:
 
         record = json.loads(history_file.read_text(encoding="utf-8").strip())
         assert record["timed_out"] is True
+
+    def test_text_override_used_when_provided(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """text_override 指定時に text フィールドがオーバーライドされること"""
+        history_file = tmp_path / "history.jsonl"
+        monkeypatch.setattr("src.history.HISTORY_DIR", tmp_path)
+        monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
+
+        save_session(_make_session(), text_override="edited text")
+
+        record = json.loads(history_file.read_text(encoding="utf-8").strip())
+        assert record["text"] == "edited text"
+
+    def test_segments_preserved_with_text_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """text_override 使用時も segments は変わらないこと"""
+        history_file = tmp_path / "history.jsonl"
+        monkeypatch.setattr("src.history.HISTORY_DIR", tmp_path)
+        monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
+
+        save_session(_make_session(), text_override="edited text")
+
+        record = json.loads(history_file.read_text(encoding="utf-8").strip())
+        assert record["segments"] == [
+            {"raw_text": "元テキスト", "corrected_text": "校正済み。"}
+        ]

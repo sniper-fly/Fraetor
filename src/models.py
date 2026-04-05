@@ -19,6 +19,7 @@ class Session(BaseModel):
     started_at: datetime
     ended_at: datetime | None = None
     correction_enabled: bool
+    paste_enabled: bool = False
     timed_out: bool = False
 
     @property

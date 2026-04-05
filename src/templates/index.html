@@ -24,6 +24,9 @@
         <span class="text-sm">校正:</span>
         <button id="correction-toggle" onclick="toggleCorrection()"
           class="px-3 py-1 rounded text-sm font-medium bg-green-600">ON</button>
+        <span class="text-sm ml-2">ペースト:</span>
+        <button id="paste-toggle" onclick="togglePaste()"
+          class="px-3 py-1 rounded text-sm font-medium bg-gray-600">OFF</button>
       </div>
       <div class="flex items-center gap-2">
         <span class="text-sm">録音:</span>
@@ -34,8 +37,20 @@
 
     <!-- メインタブ: セッション表示 -->
     <div id="panel-main">
-      <div id="segments" class="space-y-1 font-mono text-sm min-h-[200px]">
-        <p class="text-gray-500">待機中...</p>
+      <!-- ペーストOFF: エディタモード -->
+      <div id="editor-mode">
+        <textarea id="editor-textarea"
+          class="w-full bg-gray-800 text-gray-100 font-mono text-sm p-3 rounded-t border border-gray-700 focus:outline-none focus:border-blue-500 resize-y"
+          rows="8" placeholder="待機中..."></textarea>
+        <div id="editor-interim"
+          class="bg-gray-800 border border-t-0 border-gray-700 rounded-b p-3 min-h-[2rem] font-mono text-sm text-gray-400">
+        </div>
+      </div>
+      <!-- ペーストON: セグメント表示モード -->
+      <div id="segment-mode" class="hidden">
+        <div id="segments" class="space-y-1 font-mono text-sm min-h-[200px]">
+          <p class="text-gray-500">待機中...</p>
+        </div>
       </div>
     </div>
 
@@ -48,6 +63,8 @@
   </div>
 
 <script>
+let pasteEnabled = false;
+
 function switchTab(tab) {
   const mainBtn = document.getElementById('tab-main');
   const histBtn = document.getElementById('tab-history');
@@ -82,6 +99,37 @@ function updateCorrectionUI(enabled) {
   } else {
     btn.textContent = 'OFF';
     btn.className = 'px-3 py-1 rounded text-sm font-medium bg-gray-600';
+  }
+}
+
+async function togglePaste() {
+  const res = await fetch('/api/paste-toggle', { method: 'POST' });
+  const data = await res.json();
+  pasteEnabled = data.paste_enabled;
+  updatePasteUI(pasteEnabled);
+  updateDisplayMode();
+}
+
+function updatePasteUI(enabled) {
+  const btn = document.getElementById('paste-toggle');
+  if (enabled) {
+    btn.textContent = 'ON';
+    btn.className = 'px-3 py-1 rounded text-sm font-medium bg-green-600';
+  } else {
+    btn.textContent = 'OFF';
+    btn.className = 'px-3 py-1 rounded text-sm font-medium bg-gray-600';
+  }
+}
+
+function updateDisplayMode() {
+  const editorMode = document.getElementById('editor-mode');
+  const segmentMode = document.getElementById('segment-mode');
+  if (pasteEnabled) {
+    editorMode.classList.add('hidden');
+    segmentMode.classList.remove('hidden');
+  } else {
+    editorMode.classList.remove('hidden');
+    segmentMode.classList.add('hidden');
   }
 }
 
@@ -127,6 +175,41 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function appendToTextarea(text) {
+  const textarea = document.getElementById('editor-textarea');
+  const startPos = textarea.selectionStart;
+  const endPos = textarea.selectionEnd;
+  const currentLen = textarea.value.length;
+  textarea.value += text;
+  // カーソルが末尾にあった場合は末尾に追従、そうでなければ元の位置を保持
+  if (startPos === currentLen) {
+    textarea.selectionStart = textarea.value.length;
+    textarea.selectionEnd = textarea.value.length;
+  } else {
+    textarea.selectionStart = startPos;
+    textarea.selectionEnd = endPos;
+  }
+}
+
+function updateEditorInterim(text) {
+  const interim = document.getElementById('editor-interim');
+  if (text) {
+    interim.innerHTML = `${escapeHtml(text)} <span class="text-xs">[認識中]</span>`;
+  } else {
+    interim.innerHTML = '';
+  }
+}
+
+async function finalizeSession() {
+  const textarea = document.getElementById('editor-textarea');
+  const text = textarea.value;
+  await fetch('/api/finalize-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+}
+
 function connectSSE() {
   const evtSource = new EventSource('/events');
 
@@ -134,6 +217,7 @@ function connectSSE() {
     const data = JSON.parse(e.data);
     segments['interim'] = { status: 'interim', text: data.text };
     renderSegments();
+    updateEditorInterim(data.text);
   });
 
   evtSource.addEventListener('corrected', (e) => {
@@ -141,6 +225,9 @@ function connectSSE() {
     delete segments['interim'];
     segments[data.segment_id] = { status: 'corrected', text: data.text };
     renderSegments();
+    // エディタモード: 確定テキストを textarea に追加
+    appendToTextarea(data.text);
+    updateEditorInterim('');
   });
 
   evtSource.addEventListener('status', (e) => {
@@ -150,6 +237,8 @@ function connectSSE() {
       // 新セッション開始 → 表示リセット
       Object.keys(segments).forEach(k => delete segments[k]);
       renderSegments();
+      document.getElementById('editor-textarea').value = '';
+      updateEditorInterim('');
       sessionActive = true;
     }
     if (!data.recording) {
@@ -157,9 +246,14 @@ function connectSSE() {
     }
   });
 
-  evtSource.addEventListener('session_end', () => {
+  evtSource.addEventListener('session_end', (e) => {
     delete segments['interim'];
     renderSegments();
+    updateEditorInterim('');
+    const data = JSON.parse(e.data);
+    if (data.paste_enabled === false) {
+      finalizeSession();
+    }
   });
 
   evtSource.addEventListener('error', (e) => {
@@ -201,9 +295,16 @@ async function loadHistory() {
 
 // 初期化
 (async () => {
-  const res = await fetch('/api/correction-status');
-  const data = await res.json();
-  updateCorrectionUI(data.correction_enabled);
+  const [corrRes, pasteRes] = await Promise.all([
+    fetch('/api/correction-status'),
+    fetch('/api/paste-status'),
+  ]);
+  const corrData = await corrRes.json();
+  const pasteData = await pasteRes.json();
+  updateCorrectionUI(corrData.correction_enabled);
+  pasteEnabled = pasteData.paste_enabled;
+  updatePasteUI(pasteEnabled);
+  updateDisplayMode();
   connectSSE();
 })();
 </script>

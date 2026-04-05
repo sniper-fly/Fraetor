@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from src.app import app
+from src.models import Segment, Session
 from src.routes import events as events_handler
 from src.state import AppState
 
@@ -34,6 +36,8 @@ class TestIndex:
         # design.md: 校正ON/OFFトグル + 録音インジケーター
         assert "校正" in html
         assert "録音" in html
+        # design.md: ペーストON/OFFトグル
+        assert "ペースト" in html
         # design.md: TailwindCSS (CDN)
         assert "tailwindcss" in html
 
@@ -136,3 +140,73 @@ class TestEventsSSE:
 
         event = await asyncio.wait_for(_first_event(), timeout=2)
         assert event == {"event": "keepalive", "data": ""}
+
+
+class TestPasteToggle:
+    def test_default_is_off(self, client: TestClient) -> None:
+        response = client.get("/api/paste-status")
+        assert response.json() == {"paste_enabled": False}
+
+    def test_toggle_cycle(self, client: TestClient) -> None:
+        """トグルで OFF->ON->OFF と切り替わり、status にも反映される"""
+        result = client.post("/api/paste-toggle").json()
+        assert result["paste_enabled"] is True
+        assert client.get("/api/paste-status").json()["paste_enabled"] is True
+
+        result = client.post("/api/paste-toggle").json()
+        assert result["paste_enabled"] is False
+
+
+class TestPasteStatus:
+    def test_returns_current_setting(self, client: TestClient) -> None:
+        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
+        app_state.paste_enabled = True
+        assert client.get("/api/paste-status").json() == {"paste_enabled": True}
+
+
+def _make_pending_session() -> Session:
+    return Session(
+        id="pending-session-id",
+        segments=[
+            Segment(
+                id=0,
+                status="corrected",
+                raw_text="元テキスト",
+                corrected_text="校正済み。",
+            ),
+        ],
+        started_at=datetime(2026, 4, 4, 14, 28, 0, tzinfo=UTC),
+        ended_at=datetime(2026, 4, 4, 14, 28, 15, tzinfo=UTC),
+        correction_enabled=True,
+    )
+
+
+class TestFinalizeSession:
+    @patch("src.routes.save_session")
+    @patch("src.routes.copy_to_clipboard", new_callable=AsyncMock)
+    def test_copies_and_saves_when_pending(
+        self,
+        mock_copy: AsyncMock,
+        mock_save: MagicMock,
+        client: TestClient,
+    ) -> None:
+        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
+        pending = _make_pending_session()
+        app_state.pending_session = pending
+
+        response = client.post(
+            "/api/finalize-session",
+            json={"text": "edited text"},
+        )
+
+        assert response.json() == {"ok": True}
+        mock_copy.assert_called_once_with("edited text")
+        mock_save.assert_called_once_with(pending, text_override="edited text")
+        assert app_state.pending_session is None
+
+    def test_returns_false_when_no_pending(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/finalize-session",
+            json={"text": "some text"},
+        )
+        assert response.json() == {"ok": False}

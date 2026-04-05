@@ -49,6 +49,7 @@ class SessionManager:
             segments=[],
             started_at=datetime.now(tz=UTC),
             correction_enabled=self._app_state.correction_enabled,
+            paste_enabled=self._app_state.paste_enabled,
         )
         self._app_state.current_session = session
         self._app_state.recording = True
@@ -154,31 +155,38 @@ class SessionManager:
         await self._wait_for_corrections()
 
         session = self._app_state.current_session
+        session_end_data: dict[str, object] = {}
         if session:
             session.ended_at = datetime.now(tz=UTC)
             session.timed_out = timed_out
-            if session.full_text:
+            if session.paste_enabled and session.full_text:
                 try:
                     await copy_and_paste(session.full_text)
                 except Exception:
                     logger.exception("Failed to copy and paste session text")
+            elif not session.paste_enabled:
+                # ペーストOFF: ブラウザからの POST を待つ
+                self._app_state.pending_session = session
+                session_end_data["paste_enabled"] = False
 
         self._app_state.current_session = None
 
-        await self._app_state.broadcaster.broadcast("session_end", {})
+        await self._app_state.broadcaster.broadcast("session_end", session_end_data)
         await self._app_state.broadcaster.broadcast("status", {"recording": False})
 
-        # design.md: セッション終了時に JSONL に保存
+        # design.md: セッション終了時に JSONL に保存(ペーストON時のみ即時保存)
         if session:
-            try:
-                save_session(session)
-            except Exception:
-                logger.exception("Failed to save session history")
+            if session.paste_enabled:
+                try:
+                    save_session(session)
+                except Exception:
+                    logger.exception("Failed to save session history")
             logger.info(
-                "Session ended: %s (timed_out=%s, segments=%d)",
+                "Session ended: %s (timed_out=%s, segments=%d, paste_enabled=%s)",
                 session.id,
                 timed_out,
                 len(session.segments),
+                session.paste_enabled,
             )
 
         return session
