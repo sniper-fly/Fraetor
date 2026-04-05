@@ -1,11 +1,14 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
+
+SegmentStatus = Literal["interim", "correcting", "corrected"]
 
 
 class Segment(BaseModel):
     id: int
-    status: str  # "interim" | "correcting" | "corrected"
+    status: SegmentStatus
     raw_text: str
     corrected_text: str = ""
 
