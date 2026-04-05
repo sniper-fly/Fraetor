@@ -102,3 +102,4 @@ fraetor = "src.__main__:main"
 
 [tool.uv]
 exclude-newer = "14 days"
+exclude-newer-package = { google-genai = "3 days" }

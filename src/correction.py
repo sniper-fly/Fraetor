@@ -23,14 +23,22 @@ class GeminiCorrectionClient:
     """
 
     def __init__(self) -> None:
-        self._client = genai.Client(api_key=GEMINI_API_KEY)
+        self._client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options=types.HttpOptions(api_version="v1alpha"),
+        )
         self._session: AsyncSession | None = None
         self._exit_stack: AsyncExitStack | None = None
 
     async def connect(self) -> None:
         """Gemini Live API セッションに接続する。"""
+        # WORKAROUND: gemini-3.1-flash-live-preview は
+        # TEXT modality 未サポート (1011エラー)。
+        # 修正され次第 AUDIO→TEXT に戻し、
+        # output_audio_transcription を削除する。
         config = types.LiveConnectConfig(
-            response_modalities=[types.Modality.TEXT],
+            response_modalities=[types.Modality.AUDIO],
+            output_audio_transcription=types.AudioTranscriptionConfig(),
             system_instruction=types.Content(
                 parts=[types.Part(text=CORRECTION_PROMPT)]
             ),
@@ -54,8 +62,9 @@ class GeminiCorrectionClient:
 
         corrected_parts: list[str] = []
         async for message in self._session.receive():
-            if message.text is not None:
-                corrected_parts.append(message.text)
+            sc = message.server_content
+            if sc and sc.output_transcription and sc.output_transcription.text:
+                corrected_parts.append(sc.output_transcription.text)
 
         return "".join(corrected_parts) if corrected_parts else text
 

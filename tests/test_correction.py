@@ -12,8 +12,15 @@ from src.correction import GeminiCorrectionClient
 
 
 def _make_message(text: str | None) -> MagicMock:
+    """output_transcription 付きの LiveServerMessage モックを生成する。"""
+    transcription = MagicMock()
+    transcription.text = text
+
+    server_content = MagicMock()
+    server_content.output_transcription = transcription
+
     msg = MagicMock()
-    msg.text = text
+    msg.server_content = server_content
     return msg
 
 
