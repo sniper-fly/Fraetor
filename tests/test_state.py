@@ -1,47 +1,33 @@
 from __future__ import annotations
 
 import asyncio
-import json
+from unittest.mock import AsyncMock
 
 from src.state import AppState, run_hotkey_handler
 
 
 class TestRunHotkeyHandler:
-    async def test_toggles_recording_on(self) -> None:
+    async def test_calls_start_session_when_not_recording(self) -> None:
         app_state = AppState()
-        assert app_state.recording is False
-
+        session_manager = AsyncMock()
         await app_state.hotkey_queue.put("KEY_F9")
 
-        task = asyncio.create_task(run_hotkey_handler(app_state))
+        task = asyncio.create_task(run_hotkey_handler(app_state, session_manager))
         await asyncio.sleep(0.05)
         task.cancel()
 
-        assert app_state.recording is True
+        session_manager.start_session.assert_called_once()
+        session_manager.stop_session.assert_not_called()
 
-    async def test_toggles_recording_off_after_two_presses(self) -> None:
+    async def test_calls_stop_session_when_recording(self) -> None:
         app_state = AppState()
-
+        app_state.recording = True
+        session_manager = AsyncMock()
         await app_state.hotkey_queue.put("KEY_F9")
-        await app_state.hotkey_queue.put("KEY_F9")
 
-        task = asyncio.create_task(run_hotkey_handler(app_state))
+        task = asyncio.create_task(run_hotkey_handler(app_state, session_manager))
         await asyncio.sleep(0.05)
         task.cancel()
 
-        assert app_state.recording is False
-
-    async def test_broadcasts_status_on_toggle(self) -> None:
-        app_state = AppState()
-        sub_queue = app_state.broadcaster.subscribe()
-
-        await app_state.hotkey_queue.put("KEY_F9")
-
-        task = asyncio.create_task(run_hotkey_handler(app_state))
-        await asyncio.sleep(0.05)
-        task.cancel()
-
-        msg = sub_queue.get_nowait()
-        assert msg["event"] == "status"
-        data = json.loads(msg["data"])
-        assert data["recording"] is True
+        session_manager.stop_session.assert_called_once()
+        session_manager.start_session.assert_not_called()

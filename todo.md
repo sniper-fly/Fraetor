@@ -2,8 +2,8 @@
 
 - [x] Phase 1: プロジェクト基盤 (pyproject.toml, __main__.py, config.py)
 - [x] Phase 2: FastAPI + ブラウザUI + SSE (app.py, sse.py, routes.py, index.html)
-- [ ] Phase 3: ホットキー + 状態管理 (state.py, hotkey.py, models.py)
-- [ ] Phase 4: 音声キャプチャ + Azure STT (audio.py, stt.py)
+- [x] Phase 3: ホットキー + 状態管理 (state.py, hotkey.py, models.py)
+- [x] Phase 4: 音声キャプチャ + Azure STT (audio.py, stt.py)
 - [ ] Phase 5: セッションマネージャ + SSE統合 (session_manager.py, 3分タイムアウト)
 - [ ] Phase 6: クリップボード + 自動ペースト (clipboard.py, session_manager統合)
 - [ ] Phase 7: Gemini 校正 (correction.py, correction_worker, 校正待機)

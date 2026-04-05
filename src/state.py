@@ -8,6 +8,7 @@ from src.sse import SSEBroadcaster
 
 if TYPE_CHECKING:
     from src.models import Session
+    from src.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,13 @@ class AppState:
         self.recording: bool = False
 
 
-async def run_hotkey_handler(app_state: AppState) -> None:
+async def run_hotkey_handler(
+    app_state: AppState, session_manager: SessionManager
+) -> None:
     while True:
         await app_state.hotkey_queue.get()
-        app_state.recording = not app_state.recording
-        await app_state.broadcaster.broadcast(
-            "status", {"recording": app_state.recording}
-        )
+        if app_state.recording:
+            await session_manager.stop_session()
+        else:
+            await session_manager.start_session()
         logger.info("Recording: %s", app_state.recording)

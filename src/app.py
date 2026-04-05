@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from src.hotkey import HotkeyListener
 from src.routes import router
+from src.session_manager import SessionManager
 from src.state import AppState, run_hotkey_handler
 
 if TYPE_CHECKING:
@@ -28,9 +29,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.app_state = app_state
     app.state.templates_dir = Path(__file__).parent / "templates"
 
+    session_manager = SessionManager(app_state)
     hotkey_listener = HotkeyListener(app_state.hotkey_queue)
     listener_task = asyncio.create_task(hotkey_listener.run())
-    handler_task = asyncio.create_task(run_hotkey_handler(app_state))
+    handler_task = asyncio.create_task(run_hotkey_handler(app_state, session_manager))
 
     logger.info("Fraetor starting")
     yield
