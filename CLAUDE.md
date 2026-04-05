@@ -19,3 +19,5 @@ dataclassではなく、pydanticのBaseModelを利用する。
 必ずテストを実装すること
 
 依存関係追加はpyproject.tomlを直接編集せず、 uv add で最版安定版追加する
+
+pythonコマンドを単体で使うのではなく、基本的にuv runなどを利用する

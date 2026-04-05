@@ -26,7 +26,15 @@ AZURE_SPEECH_KEY: str = os.environ.get("AZURE_SPEECH_KEY", "")
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 
 # --- Gemini ---
-GEMINI_MODEL: str = "gemini-2.5-flash-preview-native-audio-dialog"
+GEMINI_MODEL: str = "gemini-3.1-flash-live-preview"
+CORRECTION_PROMPT: str = (
+    "音声認識で得られたテキストを校正してください。\n"
+    "- 句読点・記号を適切に追加・修正する\n"
+    "- 誤字脱字を修正する\n"
+    "- 不自然な表現を自然な日本語に修正する\n"
+    "- 文脈を考慮して自然な文章にする\n"
+    "- 校正結果のテキストのみを返す(説明や補足は一切付けない)"
+)
 
 # --- 履歴 ---
 HISTORY_DIR: Path = Path("~/.voice-input").expanduser()

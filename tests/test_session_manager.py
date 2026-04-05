@@ -21,6 +21,16 @@ def _mock_copy_and_paste() -> Generator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_correction_cls() -> Generator[MagicMock]:
+    mock_cls = MagicMock()
+    mock_cls.return_value.connect = AsyncMock()
+    mock_cls.return_value.correct = AsyncMock(side_effect=lambda text: text)
+    mock_cls.return_value.disconnect = AsyncMock()
+    with patch("src.session_manager.GeminiCorrectionClient", mock_cls):
+        yield mock_cls
+
+
 def _setup_mocks(
     mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
 ) -> tuple[MagicMock, MagicMock]:
@@ -411,3 +421,203 @@ class TestSessionTimeout:
         assert app_state.recording is False
         assert app_state.current_session is None
         mock_stt.stop.assert_called_once()
+
+
+@patch("src.session_manager.AudioCapture")
+@patch("src.session_manager.AzureSttClient")
+class TestCorrectionIntegration:
+    async def test_correction_enabled_connects_gemini(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        """design.md: ホットキーA 押下 → Gemini Live API セッション接続(校正ONの場合)"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        app_state = AppState()
+        app_state.correction_enabled = True
+        sm = SessionManager(app_state)
+
+        await sm.start_session()
+
+        mock_correction_cls.assert_called_once()
+        mock_correction_cls.return_value.connect.assert_called_once()
+
+        await sm.stop_session()
+
+    async def test_correction_disabled_skips_gemini(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        """design.md: 校正OFF → そのまま確定テキストとして表示"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        app_state = AppState()
+        app_state.correction_enabled = False
+        sm = SessionManager(app_state)
+
+        await sm.start_session()
+
+        mock_correction_cls.assert_not_called()
+
+        await sm.stop_session()
+
+    async def test_correction_worker_updates_corrected_text(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        """design.md: recognized → Gemini Live API → corrected → ブラウザ (緑)"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_correction_cls.return_value.correct = AsyncMock(
+            return_value="校正済みテキスト。"
+        )
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        app_state.stt_event_queue.put_nowait(
+            {"type": "recognized", "text": "校正済みテキスト"}
+        )
+        await asyncio.sleep(0.05)
+
+        session = app_state.current_session
+        assert session is not None
+        assert session.segments[0].corrected_text == "校正済みテキスト。"
+        assert session.segments[0].status == "corrected"
+
+        await sm.stop_session()
+
+    async def test_correction_worker_broadcasts_corrected(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_correction_cls.return_value.correct = AsyncMock(return_value="校正済み")
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+        sub = app_state.broadcaster.subscribe()
+        while not sub.empty():
+            sub.get_nowait()
+
+        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "元"})
+        await asyncio.sleep(0.05)
+
+        msg = sub.get_nowait()
+        assert msg["event"] == "corrected"
+        data = json.loads(msg["data"])
+        assert data["text"] == "校正済み"
+
+        await sm.stop_session()
+
+    async def test_stop_disconnects_gemini(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        """design.md: セッション終了後 → Gemini Live API セッション切断"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        await sm.stop_session()
+
+        mock_correction_cls.return_value.disconnect.assert_called_once()
+
+    @patch("src.session_manager.CORRECTION_TIMEOUT_SEC", 0.1)
+    async def test_correction_timeout_falls_back_to_raw_text(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        """design.md: タイムアウト → raw_text でペースト"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+
+        async def slow_correct(text: str) -> str:
+            await asyncio.sleep(10)
+            return "never reached"
+
+        mock_correction_cls.return_value.correct = AsyncMock(side_effect=slow_correct)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        app_state.stt_event_queue.put_nowait(
+            {"type": "recognized", "text": "元テキスト"}
+        )
+        await asyncio.sleep(0.05)
+
+        session = await sm.stop_session()
+
+        assert session is not None
+        assert session.segments[0].corrected_text == "元テキスト"
+        assert session.segments[0].status == "corrected"
+
+    async def test_correction_error_falls_back_to_raw_text(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_correction_cls.return_value.correct = AsyncMock(
+            side_effect=RuntimeError("API error")
+        )
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        app_state.stt_event_queue.put_nowait(
+            {"type": "recognized", "text": "元テキスト"}
+        )
+        await asyncio.sleep(0.05)
+
+        session = app_state.current_session
+        assert session is not None
+        assert session.segments[0].corrected_text == "元テキスト"
+        assert session.segments[0].status == "corrected"
+
+        await sm.stop_session()
+
+    async def test_serial_correction_order(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        """design.md: 直列方式
+        (1セグメントずつ送信 → turn_complete 待ち → 次セグメント)
+        """
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        call_order: list[str] = []
+
+        async def ordered_correct(text: str) -> str:
+            call_order.append(text)
+            return text + "。"
+
+        mock_correction_cls.return_value.correct = AsyncMock(
+            side_effect=ordered_correct
+        )
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "1つ目"})
+        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "2つ目"})
+        await asyncio.sleep(0.05)
+
+        assert call_order == ["1つ目", "2つ目"]
+        session = app_state.current_session
+        assert session is not None
+        assert session.segments[0].corrected_text == "1つ目。"
+        assert session.segments[1].corrected_text == "2つ目。"
+
+        await sm.stop_session()
