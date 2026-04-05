@@ -23,10 +23,7 @@ class GeminiCorrectionClient:
     """
 
     def __init__(self) -> None:
-        self._client = genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options=types.HttpOptions(api_version="v1alpha"),
-        )
+        self._client = genai.Client(api_key=GEMINI_API_KEY)
         self._session: AsyncSession | None = None
         self._exit_stack: AsyncExitStack | None = None
 
