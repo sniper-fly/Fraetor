@@ -22,6 +22,12 @@ def _mock_copy_and_paste() -> Generator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _mock_save_session() -> Generator[None]:
+    with patch("src.session_manager.save_session"):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def mock_correction_cls() -> Generator[MagicMock]:
     mock_cls = MagicMock()
     mock_cls.return_value.connect = AsyncMock()
@@ -621,3 +627,60 @@ class TestCorrectionIntegration:
         assert session.segments[1].corrected_text == "2つ目。"
 
         await sm.stop_session()
+
+
+@patch("src.session_manager.save_session")
+@patch("src.session_manager.AudioCapture")
+@patch("src.session_manager.AzureSttClient")
+class TestHistoryIntegration:
+    async def test_save_session_called_on_stop(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_save: MagicMock,
+    ) -> None:
+        """design.md: セッション終了時に JSONL に保存"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
+        await asyncio.sleep(0.05)
+
+        session = await sm.stop_session()
+
+        mock_save.assert_called_once_with(session)
+
+    async def test_save_not_called_when_not_recording(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_save: MagicMock,
+    ) -> None:
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+
+        await sm.stop_session()
+
+        mock_save.assert_not_called()
+
+    async def test_session_ends_even_if_save_fails(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_save: MagicMock,
+    ) -> None:
+        """履歴保存に失敗してもセッションは正常終了する"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_save.side_effect = OSError("disk full")
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        session = await sm.stop_session()
+
+        assert session is not None
+        assert session.ended_at is not None
+        assert app_state.recording is False

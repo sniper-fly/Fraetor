@@ -7,5 +7,5 @@
 - [x] Phase 5: セッションマネージャ + SSE統合 (session_manager.py, 3分タイムアウト)
 - [x] Phase 6: クリップボード + 自動ペースト (clipboard.py, session_manager統合)
 - [x] Phase 7: Gemini 校正 (correction.py, correction_worker, 校正待機)
-- [ ] Phase 8: 履歴 (history.py, /api/history, 履歴タブ)
+- [x] Phase 8: 履歴 (history.py, /api/history, 履歴タブ)
 - [ ] Phase 9: エラーハンドリング + 仕上げ (APIキー未設定, 権限エラー, フォールバック, 構造化ログ)

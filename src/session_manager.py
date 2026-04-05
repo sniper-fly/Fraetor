@@ -11,6 +11,7 @@ from src.audio import AudioCapture
 from src.clipboard import copy_and_paste
 from src.config import CORRECTION_TIMEOUT_SEC, MAX_SESSION_DURATION_SEC
 from src.correction import GeminiCorrectionClient
+from src.history import save_session
 from src.models import Segment, Session
 from src.stt import AzureSttClient
 
@@ -120,7 +121,12 @@ class SessionManager:
         await self._app_state.broadcaster.broadcast("session_end", {})
         await self._app_state.broadcaster.broadcast("status", {"recording": False})
 
+        # design.md: セッション終了時に JSONL に保存
         if session:
+            try:
+                save_session(session)
+            except Exception:
+                logger.exception("Failed to save session history")
             logger.info(
                 "Session ended: %s (timed_out=%s, segments=%d)",
                 session.id,
