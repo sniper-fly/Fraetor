@@ -14,6 +14,7 @@ from src.config import HISTORY_FILE, SSE_KEEPALIVE_SEC
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from src.session_manager import SessionManager
     from src.state import AppState
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,11 @@ router = APIRouter()
 def _get_state(request: Request) -> AppState:
     state: AppState = request.app.state.app_state
     return state
+
+
+def _get_session_manager(request: Request) -> SessionManager:
+    session_manager: SessionManager = request.app.state.session_manager
+    return session_manager
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -53,6 +59,17 @@ async def events(request: Request) -> EventSourceResponse:
             app_state.broadcaster.unsubscribe(queue)
 
     return EventSourceResponse(event_generator())
+
+
+@router.post("/api/toggle-recording")
+async def toggle_recording(request: Request) -> dict[str, bool]:
+    app_state = _get_state(request)
+    session_manager = _get_session_manager(request)
+    if app_state.recording:
+        await session_manager.stop_session()
+    else:
+        await session_manager.start_session()
+    return {"recording": app_state.recording}
 
 
 @router.post("/api/correction-toggle")

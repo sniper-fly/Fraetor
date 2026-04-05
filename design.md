@@ -2,49 +2,49 @@
 
 ## 概要
 
-Linux (X11) 上で動作する音声入力アプリ。ホットキーで録音を開始/停止し、Azure STT でリアルタイム認識、Gemini Live API で自動校正、校正完了後にアクティブウィンドウへ自動ペーストする。
+Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、Azure STT でリアルタイム認識、Gemini Live API で自動校正、校正完了後にアクティブウィンドウへ自動ペーストする。
 
 ## アーキテクチャ
 
 ```
-evdev (ホットキー監視) ←── Python常駐プロセス (FastAPI)
-                               │
-                          ┌────┴────┐
-                          ▼         ▼
-                    Azure STT    Gemini Live API
-                    (認識)        (校正, セッション毎に接続)
-                          │         │
-                          ▼         ▼
-                    SSE → ブラウザ (TailwindCSS)
-                          │    ├─ メインタブ: 現在のセッション表示
-                          │    └─ 履歴タブ: 過去セッション一覧
-                          │
-                     校正完了後
-                          ▼
-                   xclip + xdotool key ctrl+v
+HTTP API (POST /api/toggle-recording) ←── DE キーバインド (curl)
+         │
+         ▼
+  Python常駐プロセス (FastAPI)
+         │
+    ┌────┴────┐
+    ▼         ▼
+Azure STT    Gemini Live API
+(認識)        (校正, セッション毎に接続)
+    │         │
+    ▼         ▼
+SSE → ブラウザ (TailwindCSS)
+    │    ├─ メインタブ: 現在のセッション表示
+    │    └─ 履歴タブ: 過去セッション一覧
+    │
+校正完了後
+    ▼
+xclip + xdotool key ctrl+v
 ```
 
-## ホットキー
+## 録音トグル
 
-| キー | 機能 |
-|------|------|
-| ホットキーA | 録音開始/停止トグル |
-
-- 具体的なキー割り当ては設定ファイル（定数）で指定
-- evdev でキー監視（`input` グループへのユーザー追加が必要）
+- `POST /api/toggle-recording` で録音開始/停止をトグル
+- デスクトップ環境のキーバインド機能で任意のキーに `curl -X POST http://127.0.0.1:8765/api/toggle-recording` を割り当て
+- Wayland / X11 どちらでもDEネイティブのキーバインドで動作
 - 校正 ON/OFF はブラウザ UI 上のトグルで切り替え
 
 ## 機能要件
 
 | # | 要件 |
 |---|------|
-| 1 | Python 常駐プロセスが evdev でグローバルホットキーを監視 |
-| 2 | ホットキーA 押下 → Gemini Live API セッション接続（校正ONの場合）→ Azure STT Streaming 接続 → マイクキャプチャ開始 |
+| 1 | Python 常駐プロセス (FastAPI) が HTTP API (`POST /api/toggle-recording`) で録音トグルを受け付け |
+| 2 | トグル操作 → Gemini Live API セッション接続（校正ONの場合）→ Azure STT Streaming 接続 → マイクキャプチャ開始 |
 | 3 | Azure STT の interim → SSE でブラウザにリアルタイム表示（グレー） |
 | 4 | **校正 ON**: recognized → Gemini Live API にテキスト送信 → 校正済みテキストで表示を置換（緑） |
 | 5 | **校正 OFF**: recognized → そのまま確定テキストとして表示（緑） |
 | 6 | ブラウザ UI 上のトグルで校正 ON/OFF を切り替え。**次回セッション（次回録音開始）から反映** |
-| 7 | ホットキーA 再押下 → 録音停止、未校正セグメントの校正完了を待機（**タイムアウト 10 秒**） |
+| 7 | 再トグル → 録音停止、未校正セグメントの校正完了を待機（**タイムアウト 10 秒**） |
 | 8 | タイムアウトした場合 → raw_text（Azure STT の認識結果）でペースト |
 | 9 | 校正完了 or タイムアウト → 当該セッションの全テキストをクリップボードにコピー → xdotool key ctrl+v で自動ペースト |
 | 10 | セッション終了後 → Gemini Live API セッション切断、セッション結果を JSONL に保存 |
@@ -94,8 +94,8 @@ evdev (ホットキー監視) ←── Python常駐プロセス (FastAPI)
 
 | 項目 | 仕様 |
 |------|------|
-| セッション開始 | ホットキーA 押下。校正ONなら Gemini Live API 接続 |
-| セッション終了 | ホットキーA 再押下、またはセッション時間上限 (3分) 到達 |
+| セッション開始 | `POST /api/toggle-recording`。校正ONなら Gemini Live API 接続 |
+| セッション終了 | 再トグル、またはセッション時間上限 (3分) 到達 |
 | Gemini Live API | セッション開始時に接続、終了時に切断 |
 | ブラウザ表示 | セッション開始時にメインタブの表示をリセット |
 | クリップボード | 当該セッションのテキストのみ |
@@ -116,7 +116,7 @@ evdev (ホットキー監視) ←── Python常駐プロセス (FastAPI)
     → interim    → SSE("interim",   seg-N) → ブラウザ (グレー)
     → recognized → SSE("corrected", seg-N) → ブラウザ (緑)
 
-[ホットキーA再押下 or 3分経過]
+[再トグル or 3分経過]
   録音停止 → Azure STT切断
     → 未校正セグメントを最大10秒待機
     → 完了 or タイムアウト
@@ -167,7 +167,6 @@ CORRECTION_TIMEOUT_SEC = 10          # 校正完了待ちタイムアウト
 STABLE_PARTIAL_RESULT_THRESHOLD = 3  # Azure STT の StablePartialResultThreshold
                                      # partial result が安定とみなされるまでの閾値
                                      # 値が大きいほど interim の変動が少なく安定するが遅延が増す
-HOTKEY_RECORD = "KEY_F9"             # 録音トグルキー (evdev キーコード)
 AZURE_REGION = "japaneast"           # Azure Speech Services リージョン
 AZURE_LANGUAGE = "ja-JP"             # 認識言語
 STT_SAMPLE_RATE = 16000              # 音声サンプルレート
@@ -177,26 +176,25 @@ STT_SAMPLE_RATE = 16000              # 音声サンプルレート
 
 | レイヤー | 技術 |
 |---------|------|
-| ホットキー監視 | evdev |
+| 録音トグル | HTTP API (`POST /api/toggle-recording`) + DE キーバインド |
 | 音声キャプチャ | sounddevice |
 | STT | Azure Speech Services (Streaming) |
 | 校正 | Gemini Live API (TEXT modality, `gemini-3.1-flash-live-preview`) |
 | サーバー | FastAPI + SSE |
 | フロントエンド | HTMX + SSE + TailwindCSS (CDN) |
 | 履歴保存 | JSONL (`~/.voice-input/history.jsonl`) |
-| クリップボード | xclip (X11)。将来: wl-copy (Wayland) |
-| 自動ペースト | xdotool key ctrl+v (X11)。将来: wtype (Wayland) |
+| クリップボード | xclip (X11) / wl-copy (Wayland) |
+| 自動ペースト | xdotool key ctrl+v (X11) / wtype (Wayland) |
 
 ## 非機能要件
 
 | 項目 | 仕様 |
 |------|------|
-| 対応環境 | Linux X11（必須）、Wayland（将来対応） |
-| 権限 | ユーザーを `input` グループに追加（evdev 用） |
+| 対応環境 | Linux (X11 / Wayland) |
 | 外部サービス | Azure Speech Services アカウント、Google AI (Gemini) API キー |
 | 認証情報管理 | `pass` コマンド (エントリ: `api/azure_stt_key`, `api/gemini`)。起動時に1回取得 |
 | パッケージ管理 | uv (pyproject.toml + uv.lock) |
-| 設定ファイル | ホットキー割り当て、各種タイムアウト等は定数で管理 |
+| 設定ファイル | 各種タイムアウト等は定数で管理 |
 
 ## Gemini 校正プロンプト
 

@@ -11,9 +11,6 @@ AZURE_REGION: str = "japaneast"
 AZURE_LANGUAGE: str = "ja-JP"
 STT_SAMPLE_RATE: int = 16000
 
-# --- ホットキー ---
-HOTKEY_RECORD: str = "KEY_F9"
-
 # --- サーバー ---
 SERVER_HOST: str = "127.0.0.1"
 SERVER_PORT: int = 8765

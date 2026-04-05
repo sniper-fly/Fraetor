@@ -12,7 +12,6 @@ description = "Voice input application"
 requires-python = ">=3.13"
 dependencies = [
     "azure-cognitiveservices-speech>=1.48.2",
-    "evdev>=1.9.3",
     "fastapi>=0.135.1",
     "google-genai>=1.68.0",
     "numpy>=2.4.3",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from starlette.testclient import TestClient
@@ -86,6 +86,36 @@ class TestHistory:
         assert len(sessions) == 2
         assert sessions[0]["id"] == "new"
         assert sessions[1]["id"] == "old"
+
+
+class TestToggleRecording:
+    def test_starts_recording(self, client: TestClient) -> None:
+        mock_sm = AsyncMock()
+        client.app.state.session_manager = mock_sm  # type: ignore[attr-defined]
+
+        response = client.post("/api/toggle-recording")
+
+        assert response.status_code == 200
+        mock_sm.start_session.assert_called_once()
+
+    def test_stops_recording(self, client: TestClient) -> None:
+        mock_sm = AsyncMock()
+        client.app.state.session_manager = mock_sm  # type: ignore[attr-defined]
+        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
+        app_state.recording = True
+
+        response = client.post("/api/toggle-recording")
+
+        assert response.status_code == 200
+        mock_sm.stop_session.assert_called_once()
+
+    def test_returns_recording_state(self, client: TestClient) -> None:
+        mock_sm = AsyncMock()
+        client.app.state.session_manager = mock_sm  # type: ignore[attr-defined]
+
+        response = client.post("/api/toggle-recording")
+
+        assert response.json() == {"recording": False}
 
 
 class TestEventsSSE:
