@@ -15,6 +15,7 @@ dependencies = [
     "evdev>=1.9.3",
     "fastapi>=0.135.1",
     "google-genai>=1.68.0",
+    "numpy>=2.4.3",
     "pydantic>=2.12.5",
     "sounddevice>=0.5.5",
     "sse-starlette>=3.3.3",
@@ -65,6 +66,15 @@ packages = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 strict = true
 show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "sounddevice"
+ignore_missing_imports = true
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = "azure.*"
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
