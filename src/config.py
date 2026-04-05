@@ -36,6 +36,17 @@ CORRECTION_PROMPT: str = (
     "- 校正結果のテキストのみを返す(説明や補足は一切付けない)"
 )
 
+
+def validate_api_keys() -> list[str]:
+    """APIキーの設定状態を確認し、警告メッセージのリストを返す。"""
+    warnings: list[str] = []
+    if not AZURE_SPEECH_KEY:
+        warnings.append("AZURE_SPEECH_KEY が未設定です。音声認識は利用できません。")
+    if not GEMINI_API_KEY:
+        warnings.append("GEMINI_API_KEY が未設定です。校正機能は利用できません。")
+    return warnings
+
+
 # --- 履歴 ---
 HISTORY_DIR: Path = Path("~/.voice-input").expanduser()
 HISTORY_FILE: Path = HISTORY_DIR / "history.jsonl"

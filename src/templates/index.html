@@ -162,6 +162,15 @@ function connectSSE() {
     renderSegments();
   });
 
+  evtSource.addEventListener('error', (e) => {
+    const data = JSON.parse(e.data);
+    const container = document.getElementById('segments');
+    const errorDiv = document.createElement('p');
+    errorDiv.className = 'text-red-400 text-sm';
+    errorDiv.textContent = data.message;
+    container.appendChild(errorDiv);
+  });
+
   evtSource.onerror = () => {
     evtSource.close();
     setTimeout(connectSSE, 3000);

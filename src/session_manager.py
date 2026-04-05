@@ -56,22 +56,69 @@ class SessionManager:
 
         # design.md: Gemini Live API セッション接続(校正ONの場合)
         if session.correction_enabled:
-            self._correction_client = GeminiCorrectionClient()
-            await self._correction_client.connect()
-            self._correction_task = asyncio.create_task(self._correction_worker())
+            try:
+                self._correction_client = GeminiCorrectionClient()
+                await self._correction_client.connect()
+                self._correction_task = asyncio.create_task(self._correction_worker())
+            except Exception:
+                logger.exception(
+                    "Gemini connection failed, falling back to correction OFF"
+                )
+                self._correction_client = None
+                session.correction_enabled = False
+                await self._app_state.broadcaster.broadcast(
+                    "error",
+                    {"message": "校正接続に失敗しました。校正OFFで続行します。"},
+                )
 
         # design.md: Azure STT Streaming 接続 → マイクキャプチャ開始
-        self._stt_client = AzureSttClient(self._app_state.stt_event_queue)
-        await self._stt_client.start()
+        try:
+            self._stt_client = AzureSttClient(self._app_state.stt_event_queue)
+            await self._stt_client.start()
+        except Exception:
+            logger.exception("Azure STT start failed")
+            await self._abort_session_start()
+            return
 
-        self._audio_capture = AudioCapture(self._stt_client.write_audio)
-        self._audio_capture.start()
+        try:
+            self._audio_capture = AudioCapture(self._stt_client.write_audio)
+            self._audio_capture.start()
+        except Exception:
+            logger.exception("Audio capture start failed")
+            await self._abort_session_start()
+            return
 
         self._event_task = asyncio.create_task(self._process_stt_events())
         self._timeout_task = asyncio.create_task(self._session_timeout())
 
         await self._app_state.broadcaster.broadcast("status", {"recording": True})
         logger.info("Session started: %s", session.id)
+
+    async def _abort_session_start(self) -> None:
+        """セッション開始に失敗した場合のクリーンアップ。"""
+        if self._audio_capture:
+            self._audio_capture.stop()
+            self._audio_capture = None
+        if self._stt_client:
+            try:
+                await self._stt_client.stop()
+            except Exception:
+                logger.exception("Failed to stop STT during abort")
+            self._stt_client = None
+        if self._correction_task:
+            await self._app_state.correction_queue.put(None)
+            self._correction_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._correction_task
+            self._correction_task = None
+        if self._correction_client:
+            await self._correction_client.disconnect()
+            self._correction_client = None
+        self._app_state.current_session = None
+        self._app_state.recording = False
+        await self._app_state.broadcaster.broadcast(
+            "error", {"message": "セッション開始に失敗しました。"}
+        )
 
     async def stop_session(self, *, timed_out: bool = False) -> Session | None:
         """セッションを停止し、最終テキストを組み立てて返す。"""

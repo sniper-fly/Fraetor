@@ -26,9 +26,13 @@ class HotkeyListener:
         self,
     ) -> list[evdev.InputDevice]:  # type: ignore[type-arg]
         keyboards: list[evdev.InputDevice] = []  # type: ignore[type-arg]
+        permission_denied = 0
         for path in evdev.list_devices():
             try:
                 dev = evdev.InputDevice(path)
+            except PermissionError:
+                permission_denied += 1
+                continue
             except OSError:
                 continue
             caps: dict[int, list[int]] = dev.capabilities()
@@ -39,6 +43,12 @@ class HotkeyListener:
                 keyboards.append(dev)
             else:
                 dev.close()
+        if permission_denied > 0 and not keyboards:
+            logger.warning(
+                "%d 台のデバイスにアクセスできません。"
+                "sudo usermod -aG input $USER を実行後、再ログインしてください",
+                permission_denied,
+            )
         return keyboards
 
     async def run(self) -> None:

@@ -29,8 +29,11 @@ async def run_hotkey_handler(
 ) -> None:
     while True:
         await app_state.hotkey_queue.get()
-        if app_state.recording:
-            await session_manager.stop_session()
-        else:
-            await session_manager.start_session()
+        try:
+            if app_state.recording:
+                await session_manager.stop_session()
+            else:
+                await session_manager.start_session()
+        except Exception:
+            logger.exception("Hotkey handler error")
         logger.info("Recording: %s", app_state.recording)

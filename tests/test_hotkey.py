@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import evdev
 
@@ -77,6 +77,28 @@ class TestFindKeyboards:
         keyboards = listener._find_keyboards()
 
         assert len(keyboards) == 0
+
+    def test_permission_denied_logs_input_group_hint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """権限エラー時に input グループ追加の案内をログ出力する"""
+
+        def raise_permission(_path: str) -> None:
+            raise PermissionError("Permission denied")
+
+        monkeypatch.setattr(evdev, "list_devices", lambda: ["/dev/input/event0"])
+        monkeypatch.setattr(evdev, "InputDevice", raise_permission)
+
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        listener = HotkeyListener(queue)
+
+        with patch("src.hotkey.logger") as mock_logger:
+            keyboards = listener._find_keyboards()
+
+            assert len(keyboards) == 0
+            mock_logger.warning.assert_called_once()
+            msg = mock_logger.warning.call_args[0][0]
+            assert "usermod" in msg
 
 
 class TestMonitor:

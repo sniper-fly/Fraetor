@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 
+from src.config import validate_api_keys
 from src.hotkey import HotkeyListener
+from src.logging_config import configure_logging
 from src.routes import router
 from src.session_manager import SessionManager
 from src.state import AppState, run_hotkey_handler
@@ -21,10 +23,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    )
+    configure_logging()
+
+    for warning in validate_api_keys():
+        logger.warning(warning)
+
     app_state = AppState()
     app.state.app_state = app_state
     app.state.templates_dir = Path(__file__).parent / "templates"

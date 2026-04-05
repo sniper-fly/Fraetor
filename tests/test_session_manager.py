@@ -684,3 +684,112 @@ class TestHistoryIntegration:
         assert session is not None
         assert session.ended_at is not None
         assert app_state.recording is False
+
+
+@patch("src.session_manager.AudioCapture")
+@patch("src.session_manager.AzureSttClient")
+class TestSessionStartFailure:
+    async def test_gemini_failure_falls_back_to_correction_off(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        """Gemini接続失敗時は校正OFFにフォールバックしてセッション続行"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_correction_cls.return_value.connect = AsyncMock(
+            side_effect=RuntimeError("API error")
+        )
+        app_state = AppState()
+        app_state.correction_enabled = True
+        sm = SessionManager(app_state)
+
+        await sm.start_session()
+
+        assert app_state.recording is True
+        session = app_state.current_session
+        assert session is not None
+        assert session.correction_enabled is False
+
+        await sm.stop_session()
+
+    async def test_gemini_failure_broadcasts_error(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+        mock_correction_cls: MagicMock,
+    ) -> None:
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_correction_cls.return_value.connect = AsyncMock(
+            side_effect=RuntimeError("API error")
+        )
+        app_state = AppState()
+        app_state.correction_enabled = True
+        sub = app_state.broadcaster.subscribe()
+        sm = SessionManager(app_state)
+
+        await sm.start_session()
+
+        messages = []
+        while not sub.empty():
+            messages.append(sub.get_nowait())
+        error_msgs = [m for m in messages if m["event"] == "error"]
+        assert len(error_msgs) == 1
+        assert "校正" in json.loads(error_msgs[0]["data"])["message"]
+
+        await sm.stop_session()
+
+    async def test_stt_failure_aborts_session(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+    ) -> None:
+        """Azure STT開始失敗時はセッションを中止する"""
+        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_stt.start = AsyncMock(side_effect=RuntimeError("Auth failed"))
+        app_state = AppState()
+        app_state.correction_enabled = False
+        sm = SessionManager(app_state)
+
+        await sm.start_session()
+
+        assert app_state.recording is False
+        assert app_state.current_session is None
+
+    async def test_stt_failure_broadcasts_error(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+    ) -> None:
+        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_stt.start = AsyncMock(side_effect=RuntimeError("Auth failed"))
+        app_state = AppState()
+        app_state.correction_enabled = False
+        sub = app_state.broadcaster.subscribe()
+        sm = SessionManager(app_state)
+
+        await sm.start_session()
+
+        messages = []
+        while not sub.empty():
+            messages.append(sub.get_nowait())
+        error_msgs = [m for m in messages if m["event"] == "error"]
+        assert len(error_msgs) == 1
+        assert "失敗" in json.loads(error_msgs[0]["data"])["message"]
+
+    async def test_audio_failure_aborts_session(
+        self,
+        mock_stt_cls: MagicMock,
+        mock_audio_cls: MagicMock,
+    ) -> None:
+        """AudioCapture開始失敗時はセッションを中止する"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_audio_cls.return_value.start.side_effect = RuntimeError("No audio device")
+        app_state = AppState()
+        app_state.correction_enabled = False
+        sm = SessionManager(app_state)
+
+        await sm.start_session()
+
+        assert app_state.recording is False
+        assert app_state.current_session is None
