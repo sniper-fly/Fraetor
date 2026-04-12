@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -193,3 +195,56 @@ class TestDeleteHistory:
         response = client.request("DELETE", "/api/history/any-id")
 
         assert response.status_code == 404
+
+
+class TestShutdown:
+    @patch("src.routes.asyncio.get_running_loop")
+    def test_shutdown_returns_ok(
+        self, mock_get_loop: MagicMock, client: TestClient
+    ) -> None:
+        mock_get_loop.return_value = MagicMock()
+
+        response = client.post("/api/shutdown")
+
+        assert response.json() == {"ok": True}
+
+    @patch("src.routes.asyncio.get_running_loop")
+    def test_shutdown_stops_recording_if_active(
+        self, mock_get_loop: MagicMock, client: TestClient
+    ) -> None:
+        mock_get_loop.return_value = MagicMock()
+        mock_sm = AsyncMock()
+        client.app.state.session_manager = mock_sm  # type: ignore[attr-defined]
+        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
+        app_state.recording = True
+
+        response = client.post("/api/shutdown")
+
+        assert response.status_code == 200
+        mock_sm.stop_session.assert_called_once()
+
+    @patch("src.routes.asyncio.get_running_loop")
+    def test_shutdown_skips_stop_when_not_recording(
+        self, mock_get_loop: MagicMock, client: TestClient
+    ) -> None:
+        mock_get_loop.return_value = MagicMock()
+        mock_sm = AsyncMock()
+        client.app.state.session_manager = mock_sm  # type: ignore[attr-defined]
+
+        response = client.post("/api/shutdown")
+
+        assert response.status_code == 200
+        mock_sm.stop_session.assert_not_called()
+
+    @patch("src.routes.asyncio.get_running_loop")
+    def test_shutdown_schedules_sigterm(
+        self, mock_get_loop: MagicMock, client: TestClient
+    ) -> None:
+        mock_loop = MagicMock()
+        mock_get_loop.return_value = mock_loop
+
+        client.post("/api/shutdown")
+
+        mock_loop.call_later.assert_called_once_with(
+            0.5, os.kill, os.getpid(), signal.SIGTERM
+        )

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import signal
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
@@ -118,3 +120,15 @@ async def delete_history(session_id: str) -> dict[str, bool]:
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"deleted": True}
+
+
+@router.post("/api/shutdown")
+async def shutdown(request: Request) -> dict[str, bool]:
+    app_state = _get_state(request)
+    session_manager = _get_session_manager(request)
+    if app_state.recording:
+        await session_manager.stop_session()
+    await app_state.broadcaster.broadcast("shutdown", {})
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.5, os.kill, os.getpid(), signal.SIGTERM)
+    return {"ok": True}

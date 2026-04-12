@@ -33,6 +33,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     logger.info("Fraetor starting")
     yield
+    session_manager: SessionManager = app.state.session_manager
+    if app_state.recording:
+        await session_manager.stop_session()
     logger.info("Fraetor shutting down")
 
 
