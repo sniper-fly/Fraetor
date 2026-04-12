@@ -13,22 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 def _session_to_record(session: Session) -> dict[str, Any]:
-    """Session を JSONL 1行分の dict に変換する。
-
-    design.md のフォーマット:
-    {"id","started_at","ended_at","correction_enabled","timed_out","text","segments"}
-    """
+    """Session を JSONL 1行分の dict に変換する。"""
     return {
         "id": session.id,
         "started_at": session.started_at.isoformat(),
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
-        "correction_enabled": session.correction_enabled,
         "timed_out": session.timed_out,
         "text": session.full_text,
-        "segments": [
-            {"raw_text": seg.raw_text, "corrected_text": seg.corrected_text}
-            for seg in session.segments
-        ],
+        "segments": [{"text": seg.text} for seg in session.segments],
     }
 
 

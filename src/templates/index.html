@@ -21,10 +21,7 @@
     <!-- ステータスバー -->
     <div class="flex items-center justify-between bg-gray-800 rounded p-3 mb-4">
       <div class="flex items-center gap-3">
-        <span class="text-sm">校正:</span>
-        <button id="correction-toggle" onclick="toggleCorrection()"
-          class="px-3 py-1 rounded text-sm font-medium bg-green-600">ON</button>
-        <span class="text-sm ml-2">ペースト:</span>
+        <span class="text-sm">ペースト:</span>
         <button id="paste-toggle" onclick="togglePaste()"
           class="px-3 py-1 rounded text-sm font-medium bg-gray-600">OFF</button>
       </div>
@@ -85,23 +82,6 @@ function switchTab(tab) {
   }
 }
 
-async function toggleCorrection() {
-  const res = await fetch('/api/correction-toggle', { method: 'POST' });
-  const data = await res.json();
-  updateCorrectionUI(data.correction_enabled);
-}
-
-function updateCorrectionUI(enabled) {
-  const btn = document.getElementById('correction-toggle');
-  if (enabled) {
-    btn.textContent = 'ON';
-    btn.className = 'px-3 py-1 rounded text-sm font-medium bg-green-600';
-  } else {
-    btn.textContent = 'OFF';
-    btn.className = 'px-3 py-1 rounded text-sm font-medium bg-gray-600';
-  }
-}
-
 async function togglePaste() {
   const res = await fetch('/api/paste-toggle', { method: 'POST' });
   const data = await res.json();
@@ -158,8 +138,8 @@ function renderSegments() {
     container.innerHTML = '<p class="text-gray-500">待機中...</p>';
     return;
   }
-  const correctedIds = keys.filter(k => k !== 'interim').map(Number).sort((a, b) => a - b);
-  let html = correctedIds.map(id => {
+  const confirmedIds = keys.filter(k => k !== 'interim').map(Number).sort((a, b) => a - b);
+  let html = confirmedIds.map(id => {
     const seg = segments[id];
     return `<p class="text-green-400">${escapeHtml(seg.text)} <span class="text-xs">&#10003;</span></p>`;
   }).join('');
@@ -215,17 +195,16 @@ function connectSSE() {
 
   evtSource.addEventListener('interim', (e) => {
     const data = JSON.parse(e.data);
-    segments['interim'] = { status: 'interim', text: data.text };
+    segments['interim'] = { text: data.text };
     renderSegments();
     updateEditorInterim(data.text);
   });
 
-  evtSource.addEventListener('corrected', (e) => {
+  evtSource.addEventListener('recognized', (e) => {
     const data = JSON.parse(e.data);
     delete segments['interim'];
-    segments[data.segment_id] = { status: 'corrected', text: data.text };
+    segments[data.segment_id] = { text: data.text };
     renderSegments();
-    // エディタモード: 確定テキストを textarea に追加
     appendToTextarea(data.text);
     updateEditorInterim('');
   });
@@ -282,9 +261,8 @@ async function loadHistory() {
     }
     container.innerHTML = sessions.map(s => {
       const dt = new Date(s.started_at).toLocaleString('ja-JP');
-      const mode = s.correction_enabled ? '校正ON' : '校正OFF';
       return `<div class="bg-gray-800 rounded p-3">
-        <div class="text-xs text-gray-400 mb-1">${escapeHtml(dt)} (${mode})</div>
+        <div class="text-xs text-gray-400 mb-1">${escapeHtml(dt)}</div>
         <div class="text-sm">${escapeHtml(s.text)}</div>
       </div>`;
     }).join('');
@@ -295,13 +273,8 @@ async function loadHistory() {
 
 // 初期化
 (async () => {
-  const [corrRes, pasteRes] = await Promise.all([
-    fetch('/api/correction-status'),
-    fetch('/api/paste-status'),
-  ]);
-  const corrData = await corrRes.json();
+  const pasteRes = await fetch('/api/paste-status');
   const pasteData = await pasteRes.json();
-  updateCorrectionUI(corrData.correction_enabled);
   pasteEnabled = pasteData.paste_enabled;
   updatePasteUI(pasteEnabled);
   updateDisplayMode();

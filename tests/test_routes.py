@@ -30,33 +30,11 @@ class TestIndex:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         html = response.text
-        # design.md: タブ切替 (メイン/履歴)
         assert "メイン" in html
         assert "履歴" in html
-        # design.md: 校正ON/OFFトグル + 録音インジケーター
-        assert "校正" in html
         assert "録音" in html
-        # design.md: ペーストON/OFFトグル
         assert "ペースト" in html
-        # design.md: TailwindCSS (CDN)
         assert "tailwindcss" in html
-
-
-class TestCorrectionToggle:
-    def test_default_is_enabled(self, client: TestClient) -> None:
-        response = client.get("/api/correction-status")
-        assert response.json() == {"correction_enabled": True}
-
-    def test_toggle_cycle(self, client: TestClient) -> None:
-        """トグルで ON→OFF→ON と切り替わり、status にも反映される"""
-        result = client.post("/api/correction-toggle").json()
-        assert result["correction_enabled"] is False
-        assert (
-            client.get("/api/correction-status").json()["correction_enabled"] is False
-        )
-
-        result = client.post("/api/correction-toggle").json()
-        assert result["correction_enabled"] is True
 
 
 class TestHistory:
@@ -79,7 +57,7 @@ class TestHistory:
     def test_returns_sessions_newest_first(
         self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """design.md: 新しいセッションが上に表示"""
+        """azure-stt-only-spec.md: 新しいセッションが上に表示"""
         jsonl = tmp_path / "history.jsonl"
         jsonl.write_text(
             '{"id":"old","started_at":"2026-04-04T14:00:00","text":"古い"}\n'
@@ -168,16 +146,10 @@ def _make_pending_session() -> Session:
     return Session(
         id="pending-session-id",
         segments=[
-            Segment(
-                id=0,
-                status="corrected",
-                raw_text="元テキスト",
-                corrected_text="校正済み。",
-            ),
+            Segment(id=0, text="校正済み。"),
         ],
         started_at=datetime(2026, 4, 4, 14, 28, 0, tzinfo=UTC),
         ended_at=datetime(2026, 4, 4, 14, 28, 15, tzinfo=UTC),
-        correction_enabled=True,
     )
 
 

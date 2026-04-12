@@ -9,8 +9,7 @@ from uuid import uuid4
 
 from src.audio import AudioCapture
 from src.clipboard import copy_and_paste
-from src.config import CORRECTION_TIMEOUT_SEC, MAX_SESSION_DURATION_SEC
-from src.correction import GeminiCorrectionClient
+from src.config import MAX_SESSION_DURATION_SEC
 from src.history import save_session
 from src.models import Segment, Session
 from src.stt import AzureSttClient
@@ -26,17 +25,14 @@ class SessionManager:
 
     録音開始時に AudioCapture + AzureSttClient を起動し、
     STTイベントをセグメントに変換してSSEでブラウザに配信する。
-    校正ONの場合は GeminiCorrectionClient で校正を行う。
     """
 
     def __init__(self, app_state: AppState) -> None:
         self._app_state = app_state
         self._stt_client: AzureSttClient | None = None
         self._audio_capture: AudioCapture | None = None
-        self._correction_client: GeminiCorrectionClient | None = None
         self._event_task: asyncio.Task[None] | None = None
         self._timeout_task: asyncio.Task[None] | None = None
-        self._correction_task: asyncio.Task[None] | None = None
         self._next_segment_id: int = 0
 
     async def start_session(self) -> None:
@@ -48,31 +44,12 @@ class SessionManager:
             id=str(uuid4()),
             segments=[],
             started_at=datetime.now(tz=UTC),
-            correction_enabled=self._app_state.correction_enabled,
             paste_enabled=self._app_state.paste_enabled,
         )
         self._app_state.current_session = session
         self._app_state.recording = True
         self._next_segment_id = 0
 
-        # design.md: Gemini Live API セッション接続(校正ONの場合)
-        if session.correction_enabled:
-            try:
-                self._correction_client = GeminiCorrectionClient()
-                await self._correction_client.connect()
-                self._correction_task = asyncio.create_task(self._correction_worker())
-            except Exception:
-                logger.exception(
-                    "Gemini connection failed, falling back to correction OFF"
-                )
-                self._correction_client = None
-                session.correction_enabled = False
-                await self._app_state.broadcaster.broadcast(
-                    "error",
-                    {"message": "校正接続に失敗しました。校正OFFで続行します。"},
-                )
-
-        # design.md: Azure STT Streaming 接続 → マイクキャプチャ開始
         try:
             self._stt_client = AzureSttClient(self._app_state.stt_event_queue)
             await self._stt_client.start()
@@ -106,15 +83,6 @@ class SessionManager:
             except Exception:
                 logger.exception("Failed to stop STT during abort")
             self._stt_client = None
-        if self._correction_task:
-            await self._app_state.correction_queue.put(None)
-            self._correction_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._correction_task
-            self._correction_task = None
-        if self._correction_client:
-            await self._correction_client.disconnect()
-            self._correction_client = None
         self._app_state.current_session = None
         self._app_state.recording = False
         await self._app_state.broadcaster.broadcast(
@@ -151,9 +119,6 @@ class SessionManager:
         # 残りの recognized イベントを処理
         await self._drain_stt_queue()
 
-        # design.md: 未校正セグメントの校正完了を待機(タイムアウト10秒)
-        await self._wait_for_corrections()
-
         session = self._app_state.current_session
         session_end_data: dict[str, object] = {}
         if session:
@@ -165,7 +130,6 @@ class SessionManager:
                 except Exception:
                     logger.exception("Failed to copy and paste session text")
             elif not session.paste_enabled:
-                # ペーストOFF: ブラウザからの POST を待つ
                 self._app_state.pending_session = session
                 session_end_data["paste_enabled"] = False
 
@@ -174,7 +138,6 @@ class SessionManager:
         await self._app_state.broadcaster.broadcast("session_end", session_end_data)
         await self._app_state.broadcaster.broadcast("status", {"recording": False})
 
-        # design.md: セッション終了時に JSONL に保存(ペーストON時のみ即時保存)
         if session:
             if session.paste_enabled:
                 try:
@@ -202,18 +165,10 @@ class SessionManager:
                     )
                 elif event["type"] == "recognized":
                     segment = self._add_segment(event["text"])
-                    if self._correction_client:
-                        # design.md: recognized → Gemini Live API にテキスト送信
-                        await self._app_state.correction_queue.put(segment)
-                    else:
-                        # design.md: 校正OFF → そのまま確定テキストとして表示
-                        await self._app_state.broadcaster.broadcast(
-                            "corrected",
-                            {
-                                "segment_id": segment.id,
-                                "text": segment.corrected_text,
-                            },
-                        )
+                    await self._app_state.broadcaster.broadcast(
+                        "recognized",
+                        {"segment_id": segment.id, "text": segment.text},
+                    )
         except asyncio.CancelledError:
             pass
 
@@ -227,83 +182,21 @@ class SessionManager:
             if event["type"] != "recognized":
                 continue
             segment = self._add_segment(event["text"])
-            if self._correction_client:
-                await self._app_state.correction_queue.put(segment)
-            else:
-                await self._app_state.broadcaster.broadcast(
-                    "corrected",
-                    {"segment_id": segment.id, "text": segment.corrected_text},
-                )
+            await self._app_state.broadcaster.broadcast(
+                "recognized",
+                {"segment_id": segment.id, "text": segment.text},
+            )
 
     def _add_segment(self, text: str) -> Segment:
         """認識済みテキストからセグメントを作成し、セッションに追加する。"""
-        correcting = self._correction_client is not None
         segment = Segment(
             id=self._next_segment_id,
-            status="correcting" if correcting else "corrected",
-            raw_text=text,
-            corrected_text="" if correcting else text,
+            text=text,
         )
         self._next_segment_id += 1
         if self._app_state.current_session:
             self._app_state.current_session.segments.append(segment)
         return segment
-
-    async def _correction_worker(self) -> None:
-        """correction_queueからセグメントを取り出し、Geminiで直列に校正する。
-
-        design.md: 直列方式(1セグメントずつ送信 → turn_complete 待ち → 次セグメント)
-        """
-        while True:
-            segment = await self._app_state.correction_queue.get()
-            if segment is None:
-                break
-            try:
-                corrected = await self._correction_client.correct(  # type: ignore[union-attr]
-                    segment.raw_text
-                )
-                segment.corrected_text = corrected
-            except Exception:
-                logger.exception("Correction failed for segment %d", segment.id)
-                segment.corrected_text = segment.raw_text
-            segment.status = "corrected"
-            await self._app_state.broadcaster.broadcast(
-                "corrected",
-                {"segment_id": segment.id, "text": segment.corrected_text},
-            )
-
-    async def _wait_for_corrections(self) -> None:
-        """校正ワーカーの完了を待機し、タイムアウト時はraw_textにフォールバックする。"""
-        if not self._correction_client:
-            return
-
-        # センチネルを送信して「これ以上セグメントはない」と通知
-        await self._app_state.correction_queue.put(None)
-
-        if self._correction_task:
-            try:
-                await asyncio.wait_for(
-                    self._correction_task, timeout=CORRECTION_TIMEOUT_SEC
-                )
-            except TimeoutError:
-                logger.warning(
-                    "Correction timed out after %ds, using raw_text",
-                    CORRECTION_TIMEOUT_SEC,
-                )
-                self._correction_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._correction_task
-
-                # design.md: タイムアウト → raw_text でペースト
-                if self._app_state.current_session:
-                    for seg in self._app_state.current_session.segments:
-                        if seg.status == "correcting":
-                            seg.corrected_text = seg.raw_text
-                            seg.status = "corrected"
-            self._correction_task = None
-
-        await self._correction_client.disconnect()
-        self._correction_client = None
 
     async def _session_timeout(self) -> None:
         """MAX_SESSION_DURATION_SEC 後にセッションを自動停止する。"""

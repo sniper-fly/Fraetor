@@ -75,20 +75,6 @@ async def toggle_recording(request: Request) -> dict[str, bool]:
     return {"recording": app_state.recording}
 
 
-@router.post("/api/correction-toggle")
-async def correction_toggle(request: Request) -> dict[str, bool]:
-    app_state = _get_state(request)
-    app_state.correction_enabled = not app_state.correction_enabled
-    logger.info("Correction toggled: %s", app_state.correction_enabled)
-    return {"correction_enabled": app_state.correction_enabled}
-
-
-@router.get("/api/correction-status")
-async def correction_status(request: Request) -> dict[str, bool]:
-    app_state = _get_state(request)
-    return {"correction_enabled": app_state.correction_enabled}
-
-
 @router.get("/api/history")
 async def history() -> list[dict[str, object]]:
     if not HISTORY_FILE.exists():

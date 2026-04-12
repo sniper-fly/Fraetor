@@ -1,6 +1,6 @@
 # Fraetor
 
-Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、Azure STT でリアルタイム認識、Gemini Live API で自動校正、校正完了後にアクティブウィンドウへ自動ペーストする。
+Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、Azure STT でリアルタイム認識、Gemini Live API で自動校正、校正完了後に自動コピー
 
 ## セットアップ
 
@@ -31,10 +31,10 @@ uv run fraetor
 
 ### キーバインド設定
 
-任意のキーに以下のコマンドを割り当ててください:
+任意のキーに以下のコマンドを割り当ててください。サーバーが未起動の場合は自動で起動します:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/api/toggle-recording
+/path/to/Fraetor/toggle-recording.sh
 ```
 
 **GNOME**: 設定 → キーボード → キーボードショートカット → カスタムショートカット
