@@ -186,12 +186,27 @@ async function loadHistory() {
     container.innerHTML = sessions.map(s => {
       const dt = new Date(s.started_at).toLocaleString('ja-JP');
       return `<div class="bg-gray-800 rounded p-3">
-        <div class="text-xs text-gray-400 mb-1">${escapeHtml(dt)}</div>
+        <div class="flex justify-between items-start">
+          <div class="text-xs text-gray-400 mb-1">${escapeHtml(dt)}</div>
+          <button onclick="deleteHistory('${escapeHtml(s.id)}')"
+            class="text-gray-500 hover:text-red-400 text-xs ml-2 shrink-0">削除</button>
+        </div>
         <div class="text-sm">${escapeHtml(s.text)}</div>
       </div>`;
     }).join('');
   } catch {
     container.innerHTML = '<p class="text-gray-500">履歴の読み込みに失敗しました</p>';
+  }
+}
+
+async function deleteHistory(sessionId) {
+  try {
+    const res = await fetch(`/api/history/${sessionId}`, { method: 'DELETE' });
+    if (res.ok) {
+      loadHistory();
+    }
+  } catch {
+    // ネットワークエラー時は何もしない
   }
 }
 

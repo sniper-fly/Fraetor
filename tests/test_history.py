@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from src.history import save_session
+from src.history import delete_session, save_session
 from src.models import Segment, Session
 
 if TYPE_CHECKING:
@@ -136,3 +136,75 @@ class TestSaveSession:
 
         record = json.loads(history_file.read_text(encoding="utf-8").strip())
         assert record["segments"] == [{"text": "校正済み。"}]
+
+
+class TestDeleteSession:
+    def _write_jsonl(self, path: Path, records: list[dict[str, object]]) -> None:
+        path.write_text(
+            "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+            encoding="utf-8",
+        )
+
+    def test_deletes_matching_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """3件中1件を削除し、残り2件が正しく残る"""
+        history_file = tmp_path / "history.jsonl"
+        records: list[dict[str, object]] = [
+            {"id": "a", "text": "first"},
+            {"id": "b", "text": "second"},
+            {"id": "c", "text": "third"},
+        ]
+        self._write_jsonl(history_file, records)
+        monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
+
+        result = delete_session("b")
+
+        assert result is True
+        lines = history_file.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2
+        ids = [json.loads(line)["id"] for line in lines]
+        assert ids == ["a", "c"]
+
+    def test_returns_false_when_id_not_found(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """存在しないIDを指定した場合に False を返しファイル内容不変"""
+        history_file = tmp_path / "history.jsonl"
+        records: list[dict[str, object]] = [{"id": "a", "text": "first"}]
+        self._write_jsonl(history_file, records)
+        original_content = history_file.read_text(encoding="utf-8")
+        monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
+
+        result = delete_session("nonexistent")
+
+        assert result is False
+        assert history_file.read_text(encoding="utf-8") == original_content
+
+    def test_returns_false_when_file_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ファイルが存在しない場合に False を返す"""
+        history_file = tmp_path / "nonexistent.jsonl"
+        monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
+
+        result = delete_session("any-id")
+
+        assert result is False
+
+    def test_preserves_other_records(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """削除後、他のレコードの内容が変化していない"""
+        history_file = tmp_path / "history.jsonl"
+        records: list[dict[str, object]] = [
+            {"id": "a", "text": "first", "extra": 42},
+            {"id": "b", "text": "second"},
+        ]
+        self._write_jsonl(history_file, records)
+        monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
+
+        delete_session("b")
+
+        remaining = json.loads(history_file.read_text(encoding="utf-8").strip())
+        assert remaining == {"id": "a", "text": "first", "extra": 42}

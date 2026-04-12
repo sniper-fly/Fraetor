@@ -5,14 +5,14 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from src.clipboard import copy_to_clipboard
 from src.config import HISTORY_FILE, SSE_KEEPALIVE_SEC
-from src.history import save_session
+from src.history import delete_session, save_session
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -110,3 +110,11 @@ async def finalize_session(request: Request) -> dict[str, bool]:
         logger.exception("Failed to save session history")
     app_state.pending_session = None
     return {"ok": True}
+
+
+@router.delete("/api/history/{session_id}")
+async def delete_history(session_id: str) -> dict[str, bool]:
+    deleted = delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"deleted": True}

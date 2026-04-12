@@ -33,3 +33,22 @@ def save_session(session: Session, *, text_override: str | None = None) -> None:
     with HISTORY_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
     logger.info("Session saved to history: %s", session.id)
+
+
+def delete_session(session_id: str) -> bool:
+    """指定されたIDのセッションをJSONLファイルから削除する。"""
+    if not HISTORY_FILE.exists():
+        return False
+    lines = HISTORY_FILE.read_text(encoding="utf-8").splitlines()
+    remaining = [
+        line for line in lines if line.strip() and json.loads(line)["id"] != session_id
+    ]
+    original_count = sum(1 for line in lines if line.strip())
+    if len(remaining) == original_count:
+        return False
+    HISTORY_FILE.write_text(
+        "".join(line + "\n" for line in remaining),
+        encoding="utf-8",
+    )
+    logger.info("Session deleted from history: %s", session_id)
+    return True

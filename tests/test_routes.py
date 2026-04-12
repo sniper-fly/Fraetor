@@ -159,3 +159,37 @@ class TestFinalizeSession:
             json={"text": "some text"},
         )
         assert response.json() == {"ok": False}
+
+
+class TestDeleteHistory:
+    def test_delete_existing_session(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        jsonl = tmp_path / "history.jsonl"
+        jsonl.write_text('{"id":"aaa","text":"first"}\n{"id":"bbb","text":"second"}\n')
+        monkeypatch.setattr("src.history.HISTORY_FILE", jsonl)
+
+        response = client.request("DELETE", "/api/history/aaa")
+
+        assert response.status_code == 200
+        assert response.json() == {"deleted": True}
+
+    def test_delete_nonexistent_returns_404(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        jsonl = tmp_path / "history.jsonl"
+        jsonl.write_text('{"id":"aaa","text":"first"}\n')
+        monkeypatch.setattr("src.history.HISTORY_FILE", jsonl)
+
+        response = client.request("DELETE", "/api/history/nonexistent")
+
+        assert response.status_code == 404
+
+    def test_delete_when_no_file_returns_404(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.history.HISTORY_FILE", tmp_path / "missing.jsonl")
+
+        response = client.request("DELETE", "/api/history/any-id")
+
+        assert response.status_code == 404
