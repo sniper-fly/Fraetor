@@ -33,7 +33,6 @@ class TestIndex:
         assert "メイン" in html
         assert "履歴" in html
         assert "録音" in html
-        assert "ペースト" in html
         assert "tailwindcss" in html
 
 
@@ -118,28 +117,6 @@ class TestEventsSSE:
 
         event = await asyncio.wait_for(_first_event(), timeout=2)
         assert event == {"event": "keepalive", "data": ""}
-
-
-class TestPasteToggle:
-    def test_default_is_off(self, client: TestClient) -> None:
-        response = client.get("/api/paste-status")
-        assert response.json() == {"paste_enabled": False}
-
-    def test_toggle_cycle(self, client: TestClient) -> None:
-        """トグルで OFF->ON->OFF と切り替わり、status にも反映される"""
-        result = client.post("/api/paste-toggle").json()
-        assert result["paste_enabled"] is True
-        assert client.get("/api/paste-status").json()["paste_enabled"] is True
-
-        result = client.post("/api/paste-toggle").json()
-        assert result["paste_enabled"] is False
-
-
-class TestPasteStatus:
-    def test_returns_current_setting(self, client: TestClient) -> None:
-        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
-        app_state.paste_enabled = True
-        assert client.get("/api/paste-status").json() == {"paste_enabled": True}
 
 
 def _make_pending_session() -> Session:

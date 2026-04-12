@@ -89,20 +89,6 @@ async def history() -> list[dict[str, object]]:
     return sessions
 
 
-@router.post("/api/paste-toggle")
-async def paste_toggle(request: Request) -> dict[str, bool]:
-    app_state = _get_state(request)
-    app_state.paste_enabled = not app_state.paste_enabled
-    logger.info("Paste toggled: %s", app_state.paste_enabled)
-    return {"paste_enabled": app_state.paste_enabled}
-
-
-@router.get("/api/paste-status")
-async def paste_status(request: Request) -> dict[str, bool]:
-    app_state = _get_state(request)
-    return {"paste_enabled": app_state.paste_enabled}
-
-
 class FinalizeSessionRequest(BaseModel):
     text: str
 

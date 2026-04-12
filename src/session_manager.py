@@ -8,9 +8,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.audio import AudioCapture
-from src.clipboard import copy_and_paste
 from src.config import MAX_SESSION_DURATION_SEC
-from src.history import save_session
 from src.models import Segment, Session
 from src.stt import AzureSttClient
 
@@ -44,7 +42,6 @@ class SessionManager:
             id=str(uuid4()),
             segments=[],
             started_at=datetime.now(tz=UTC),
-            paste_enabled=self._app_state.paste_enabled,
         )
         self._app_state.current_session = session
         self._app_state.recording = True
@@ -124,14 +121,7 @@ class SessionManager:
         if session:
             session.ended_at = datetime.now(tz=UTC)
             session.timed_out = timed_out
-            if session.paste_enabled and session.full_text:
-                try:
-                    await copy_and_paste(session.full_text)
-                except Exception:
-                    logger.exception("Failed to copy and paste session text")
-            elif not session.paste_enabled:
-                self._app_state.pending_session = session
-                session_end_data["paste_enabled"] = False
+            self._app_state.pending_session = session
 
         self._app_state.current_session = None
 
@@ -139,17 +129,11 @@ class SessionManager:
         await self._app_state.broadcaster.broadcast("status", {"recording": False})
 
         if session:
-            if session.paste_enabled:
-                try:
-                    save_session(session)
-                except Exception:
-                    logger.exception("Failed to save session history")
             logger.info(
-                "Session ended: %s (timed_out=%s, segments=%d, paste_enabled=%s)",
+                "Session ended: %s (timed_out=%s, segments=%d)",
                 session.id,
                 timed_out,
                 len(session.segments),
-                session.paste_enabled,
             )
 
         return session

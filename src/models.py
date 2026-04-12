@@ -13,7 +13,6 @@ class Session(BaseModel):
     segments: list[Segment]
     started_at: datetime
     ended_at: datetime | None = None
-    paste_enabled: bool = False
     timed_out: bool = False
 
     @property

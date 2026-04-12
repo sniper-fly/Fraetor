@@ -19,12 +19,7 @@
     </div>
 
     <!-- ステータスバー -->
-    <div class="flex items-center justify-between bg-gray-800 rounded p-3 mb-4">
-      <div class="flex items-center gap-3">
-        <span class="text-sm">ペースト:</span>
-        <button id="paste-toggle" onclick="togglePaste()"
-          class="px-3 py-1 rounded text-sm font-medium bg-gray-600">OFF</button>
-      </div>
+    <div class="flex items-center justify-end bg-gray-800 rounded p-3 mb-4">
       <div class="flex items-center gap-2">
         <span class="text-sm">録音:</span>
         <span id="rec-indicator" class="inline-block w-3 h-3 rounded-full bg-gray-500"></span>
@@ -34,19 +29,12 @@
 
     <!-- メインタブ: セッション表示 -->
     <div id="panel-main">
-      <!-- ペーストOFF: エディタモード -->
       <div id="editor-mode">
         <textarea id="editor-textarea"
           class="w-full bg-gray-800 text-gray-100 font-mono text-sm p-3 rounded-t border border-gray-700 focus:outline-none focus:border-blue-500 resize-y"
           rows="8" placeholder="待機中..."></textarea>
         <div id="editor-interim"
           class="bg-gray-800 border border-t-0 border-gray-700 rounded-b p-3 min-h-[2rem] font-mono text-sm text-gray-400">
-        </div>
-      </div>
-      <!-- ペーストON: セグメント表示モード -->
-      <div id="segment-mode" class="hidden">
-        <div id="segments" class="space-y-1 font-mono text-sm min-h-[200px]">
-          <p class="text-gray-500">待機中...</p>
         </div>
       </div>
     </div>
@@ -60,8 +48,6 @@
   </div>
 
 <script>
-let pasteEnabled = false;
-
 function switchTab(tab) {
   const mainBtn = document.getElementById('tab-main');
   const histBtn = document.getElementById('tab-history');
@@ -82,37 +68,6 @@ function switchTab(tab) {
   }
 }
 
-async function togglePaste() {
-  const res = await fetch('/api/paste-toggle', { method: 'POST' });
-  const data = await res.json();
-  pasteEnabled = data.paste_enabled;
-  updatePasteUI(pasteEnabled);
-  updateDisplayMode();
-}
-
-function updatePasteUI(enabled) {
-  const btn = document.getElementById('paste-toggle');
-  if (enabled) {
-    btn.textContent = 'ON';
-    btn.className = 'px-3 py-1 rounded text-sm font-medium bg-green-600';
-  } else {
-    btn.textContent = 'OFF';
-    btn.className = 'px-3 py-1 rounded text-sm font-medium bg-gray-600';
-  }
-}
-
-function updateDisplayMode() {
-  const editorMode = document.getElementById('editor-mode');
-  const segmentMode = document.getElementById('segment-mode');
-  if (pasteEnabled) {
-    editorMode.classList.add('hidden');
-    segmentMode.classList.remove('hidden');
-  } else {
-    editorMode.classList.remove('hidden');
-    segmentMode.classList.add('hidden');
-  }
-}
-
 function updateRecordingUI(recording) {
   const indicator = document.getElementById('rec-indicator');
   const label = document.getElementById('rec-label');
@@ -128,26 +83,7 @@ function updateRecordingUI(recording) {
 }
 
 // --- SSE ---
-const segments = {};
 let sessionActive = false;
-
-function renderSegments() {
-  const container = document.getElementById('segments');
-  const keys = Object.keys(segments);
-  if (keys.length === 0) {
-    container.innerHTML = '<p class="text-gray-500">待機中...</p>';
-    return;
-  }
-  const confirmedIds = keys.filter(k => k !== 'interim').map(Number).sort((a, b) => a - b);
-  let html = confirmedIds.map(id => {
-    const seg = segments[id];
-    return `<p class="text-green-400">${escapeHtml(seg.text)} <span class="text-xs">&#10003;</span></p>`;
-  }).join('');
-  if (segments['interim']) {
-    html += `<p class="text-gray-400">${escapeHtml(segments['interim'].text)} <span class="text-xs">[認識中]</span></p>`;
-  }
-  container.innerHTML = html;
-}
 
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -195,16 +131,11 @@ function connectSSE() {
 
   evtSource.addEventListener('interim', (e) => {
     const data = JSON.parse(e.data);
-    segments['interim'] = { text: data.text };
-    renderSegments();
     updateEditorInterim(data.text);
   });
 
   evtSource.addEventListener('recognized', (e) => {
     const data = JSON.parse(e.data);
-    delete segments['interim'];
-    segments[data.segment_id] = { text: data.text };
-    renderSegments();
     appendToTextarea(data.text);
     updateEditorInterim('');
   });
@@ -214,8 +145,6 @@ function connectSSE() {
     updateRecordingUI(data.recording);
     if (data.recording && !sessionActive) {
       // 新セッション開始 → 表示リセット
-      Object.keys(segments).forEach(k => delete segments[k]);
-      renderSegments();
       document.getElementById('editor-textarea').value = '';
       updateEditorInterim('');
       sessionActive = true;
@@ -226,18 +155,13 @@ function connectSSE() {
   });
 
   evtSource.addEventListener('session_end', (e) => {
-    delete segments['interim'];
-    renderSegments();
     updateEditorInterim('');
-    const data = JSON.parse(e.data);
-    if (data.paste_enabled === false) {
-      finalizeSession();
-    }
+    finalizeSession();
   });
 
   evtSource.addEventListener('error', (e) => {
     const data = JSON.parse(e.data);
-    const container = document.getElementById('segments');
+    const container = document.getElementById('editor-mode');
     const errorDiv = document.createElement('p');
     errorDiv.className = 'text-red-400 text-sm';
     errorDiv.textContent = data.message;
@@ -272,14 +196,7 @@ async function loadHistory() {
 }
 
 // 初期化
-(async () => {
-  const pasteRes = await fetch('/api/paste-status');
-  const pasteData = await pasteRes.json();
-  pasteEnabled = pasteData.paste_enabled;
-  updatePasteUI(pasteEnabled);
-  updateDisplayMode();
-  connectSSE();
-})();
+connectSSE();
 </script>
 </body>
 </html>

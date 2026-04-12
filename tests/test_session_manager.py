@@ -3,28 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
-
-import pytest
 
 from src.session_manager import SessionManager
 from src.state import AppState
-
-
-@pytest.fixture(autouse=True)
-def _mock_copy_and_paste() -> Generator[None]:
-    with patch("src.session_manager.copy_and_paste", new_callable=AsyncMock):
-        yield
-
-
-@pytest.fixture(autouse=True)
-def _mock_save_session() -> Generator[None]:
-    with patch("src.session_manager.save_session"):
-        yield
 
 
 def _setup_mocks(
@@ -210,6 +192,23 @@ class TestStopSession:
         assert len(session.segments) == 1
         assert session.segments[0].text == "ドレイン"
 
+    async def test_sets_pending_session_on_stop(
+        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+    ) -> None:
+        """停止時に pending_session にセッションが保存されること"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
+        await asyncio.sleep(0.05)
+
+        session = await sm.stop_session()
+
+        assert app_state.pending_session is session
+        assert app_state.current_session is None
+
 
 @patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.AzureSttClient")
@@ -307,74 +306,6 @@ class TestSttEventProcessing:
         assert session.full_text == "こんにちは。お元気ですか。"
 
 
-@patch("src.session_manager.copy_and_paste", new_callable=AsyncMock)
-@patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
-class TestClipboardIntegration:
-    async def test_copies_and_pastes_full_text_on_session_end(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """azure-stt-only-spec.md: 全セグメントのテキスト結合 → xclip → xdotool"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = True
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        app_state.stt_event_queue.put_nowait(
-            {"type": "recognized", "text": "こんにちは。"}
-        )
-        app_state.stt_event_queue.put_nowait(
-            {"type": "recognized", "text": "お元気ですか。"}
-        )
-        await asyncio.sleep(0.05)
-
-        await sm.stop_session()
-
-        mock_copy_paste.assert_called_once_with("こんにちは。お元気ですか。")
-
-    async def test_skips_paste_when_no_segments(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        await sm.stop_session()
-
-        mock_copy_paste.assert_not_called()
-
-    async def test_session_ends_even_if_paste_fails(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """ペースト失敗時もセッションは正常終了する"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        mock_copy_paste.side_effect = RuntimeError("xclip not found")
-        app_state = AppState()
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
-        await asyncio.sleep(0.05)
-
-        session = await sm.stop_session()
-
-        assert session is not None
-        assert session.ended_at is not None
-        assert app_state.current_session is None
-        assert app_state.recording is False
-
-
 @patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.AzureSttClient")
 class TestSessionTimeout:
@@ -395,64 +326,6 @@ class TestSessionTimeout:
         assert app_state.recording is False
         assert app_state.current_session is None
         mock_stt.stop.assert_called_once()
-
-
-@patch("src.session_manager.save_session")
-@patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
-class TestHistoryIntegration:
-    async def test_save_session_called_on_stop(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-    ) -> None:
-        """azure-stt-only-spec.md: セッション終了時に JSONL に保存"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = True
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
-        await asyncio.sleep(0.05)
-
-        session = await sm.stop_session()
-
-        mock_save.assert_called_once_with(session)
-
-    async def test_save_not_called_when_not_recording(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-    ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        sm = SessionManager(app_state)
-
-        await sm.stop_session()
-
-        mock_save.assert_not_called()
-
-    async def test_session_ends_even_if_save_fails(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-    ) -> None:
-        """履歴保存に失敗してもセッションは正常終了する"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        mock_save.side_effect = OSError("disk full")
-        app_state = AppState()
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        session = await sm.stop_session()
-
-        assert session is not None
-        assert session.ended_at is not None
-        assert app_state.recording is False
 
 
 @patch("src.session_manager.AudioCapture")
@@ -509,143 +382,3 @@ class TestSessionStartFailure:
 
         assert app_state.recording is False
         assert app_state.current_session is None
-
-
-@patch("src.session_manager.copy_and_paste", new_callable=AsyncMock)
-@patch("src.session_manager.save_session")
-@patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
-class TestPasteMode:
-    async def test_paste_off_skips_copy_and_paste(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """ペーストOFF時に copy_and_paste が呼ばれないこと"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = False
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
-        await asyncio.sleep(0.05)
-
-        await sm.stop_session()
-
-        mock_copy_paste.assert_not_called()
-
-    async def test_paste_off_skips_save_session(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """ペーストOFF時に save_session が呼ばれないこと"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = False
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
-        await asyncio.sleep(0.05)
-
-        await sm.stop_session()
-
-        mock_save.assert_not_called()
-
-    async def test_paste_off_stores_pending_session(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """ペーストOFF時に pending_session にセッションが保存されること"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = False
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
-        await asyncio.sleep(0.05)
-
-        session = await sm.stop_session()
-
-        assert app_state.pending_session is session
-        assert app_state.current_session is None
-
-    async def test_paste_on_calls_copy_and_paste(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """ペーストON時は従来通り copy_and_paste + save_session が呼ばれること"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = True
-        sm = SessionManager(app_state)
-        await sm.start_session()
-
-        app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
-        await asyncio.sleep(0.05)
-
-        session = await sm.stop_session()
-
-        mock_copy_paste.assert_called_once_with("テスト")
-        mock_save.assert_called_once_with(session)
-        assert app_state.pending_session is None
-
-    async def test_paste_enabled_captured_at_session_start(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """ペースト設定がセッション開始時にキャプチャされること"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = True
-        sm = SessionManager(app_state)
-
-        await sm.start_session()
-
-        app_state.paste_enabled = False
-        assert app_state.current_session is not None
-        assert app_state.current_session.paste_enabled is True
-
-        await sm.stop_session()
-
-    async def test_paste_off_broadcasts_session_end_with_flag(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-        mock_save: MagicMock,
-        mock_copy_paste: AsyncMock,
-    ) -> None:
-        """ペーストOFF時に session_end に paste_enabled: false が含まれること"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        app_state = AppState()
-        app_state.paste_enabled = False
-        sm = SessionManager(app_state)
-        await sm.start_session()
-        sub = app_state.broadcaster.subscribe()
-        while not sub.empty():
-            sub.get_nowait()
-
-        await sm.stop_session()
-
-        messages = []
-        while not sub.empty():
-            messages.append(sub.get_nowait())
-        session_end_msg = next(m for m in messages if m["event"] == "session_end")
-        data = json.loads(session_end_msg["data"])
-        assert data["paste_enabled"] is False
