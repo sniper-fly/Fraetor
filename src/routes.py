@@ -13,12 +13,13 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from src.clipboard import copy_to_clipboard
-from src.config import HISTORY_FILE, SSE_KEEPALIVE_SEC
+from src.config import HISTORY_FILE, PROOFREAD_TIMEOUT_SEC, SSE_KEEPALIVE_SEC
 from src.history import delete_session, save_session
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from src.proofreader import Proofreader
     from src.session_manager import SessionManager
     from src.state import AppState
 
@@ -89,6 +90,27 @@ async def history() -> list[dict[str, object]]:
     ]
     sessions.reverse()
     return sessions
+
+
+class ProofreadRequest(BaseModel):
+    text: str
+
+
+@router.post("/api/proofread")
+async def proofread_text(request: Request) -> dict[str, object]:
+    body = ProofreadRequest.model_validate(await request.json())
+    proofreader: Proofreader | None = request.app.state.proofreader
+    if proofreader is None:
+        return {"text": body.text, "proofread": False}
+    try:
+        result = await asyncio.wait_for(
+            proofreader.proofread(body.text),
+            timeout=PROOFREAD_TIMEOUT_SEC,
+        )
+        return {"text": result, "proofread": True}
+    except Exception:
+        logger.exception("Proofreading failed")
+        return {"text": body.text, "proofread": False}
 
 
 class FinalizeSessionRequest(BaseModel):

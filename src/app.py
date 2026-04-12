@@ -7,8 +7,16 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 
-from src.config import validate_api_keys
+from src.config import (
+    GEMINI_MODEL,
+    PROOFREAD_PROMPT,
+    VERTEX_LOCATION,
+    VERTEX_PROJECT,
+    VERTEX_SA_INFO,
+    validate_api_keys,
+)
 from src.logging_config import configure_logging
+from src.proofreader import Proofreader
 from src.routes import router
 from src.session_manager import SessionManager
 from src.state import AppState
@@ -30,6 +38,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.app_state = app_state
     app.state.templates_dir = Path(__file__).parent / "templates"
     app.state.session_manager = SessionManager(app_state)
+    if VERTEX_SA_INFO:
+        app.state.proofreader = Proofreader(
+            sa_info=VERTEX_SA_INFO,
+            project=VERTEX_PROJECT,
+            location=VERTEX_LOCATION,
+            model=GEMINI_MODEL,
+            prompt=PROOFREAD_PROMPT,
+        )
+    else:
+        app.state.proofreader = None
 
     logger.info("Fraetor starting")
     yield

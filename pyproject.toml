@@ -13,6 +13,7 @@ requires-python = ">=3.13"
 dependencies = [
     "azure-cognitiveservices-speech>=1.48.2",
     "fastapi>=0.135.1",
+    "google-genai>=1.71.0",
     "numpy>=2.4.3",
     "pydantic>=2.12.5",
     "sounddevice>=0.5.5",
@@ -72,6 +73,10 @@ follow_untyped_imports = true
 
 [[tool.mypy.overrides]]
 module = "azure.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "google.*"
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

@@ -121,6 +121,37 @@ class TestEventsSSE:
         assert event == {"event": "keepalive", "data": ""}
 
 
+class TestProofread:
+    def test_returns_proofread_text(self, client: TestClient) -> None:
+        """校正成功時にLLMの結果が返される。"""
+        mock_proofreader = AsyncMock()
+        mock_proofreader.proofread.return_value = "校正済みテキスト"
+        client.app.state.proofreader = mock_proofreader  # type: ignore[attr-defined]
+
+        response = client.post("/api/proofread", json={"text": "元のテキスト"})
+
+        assert response.json() == {"text": "校正済みテキスト", "proofread": True}
+        mock_proofreader.proofread.assert_called_once_with("元のテキスト")
+
+    def test_returns_original_on_error(self, client: TestClient) -> None:
+        """校正失敗時に元テキストが返される。"""
+        mock_proofreader = AsyncMock()
+        mock_proofreader.proofread.side_effect = RuntimeError("API error")
+        client.app.state.proofreader = mock_proofreader  # type: ignore[attr-defined]
+
+        response = client.post("/api/proofread", json={"text": "元のテキスト"})
+
+        assert response.json() == {"text": "元のテキスト", "proofread": False}
+
+    def test_returns_original_when_proofreader_none(self, client: TestClient) -> None:
+        """Proofreader未設定時に元テキストが返される。"""
+        client.app.state.proofreader = None  # type: ignore[attr-defined]
+
+        response = client.post("/api/proofread", json={"text": "テスト"})
+
+        assert response.json() == {"text": "テスト", "proofread": False}
+
+
 def _make_pending_session() -> Session:
     return Session(
         id="pending-session-id",
