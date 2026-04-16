@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from google import genai
+from google.genai import types
 from google.oauth2 import service_account
+
+from src.models import ProofreadResult
 
 
 class Proofreader:
@@ -40,7 +43,14 @@ class Proofreader:
 
         response = await self._client.aio.models.generate_content(
             model=self._model,
-            contents=f"{self._prompt}\n\n{text}",
+            contents=text,
+            config=types.GenerateContentConfig(
+                system_instruction=self._prompt,
+                response_mime_type="application/json",
+                response_schema=ProofreadResult,
+            ),
         )
-        result = response.text
-        return result if result else text
+        parsed = response.parsed
+        if isinstance(parsed, ProofreadResult):
+            return parsed.corrected_text
+        return text

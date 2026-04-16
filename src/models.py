@@ -8,6 +8,12 @@ class Segment(BaseModel):
     text: str
 
 
+class ProofreadResult(BaseModel):
+    """LLM校正の構造化出力スキーマ。"""
+
+    corrected_text: str
+
+
 class Session(BaseModel):
     id: str
     segments: list[Segment]

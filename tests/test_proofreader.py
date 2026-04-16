@@ -3,7 +3,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.genai import types
 
+from src.models import ProofreadResult
 from src.proofreader import Proofreader
 
 
@@ -24,10 +26,10 @@ def _make_proofreader(mock_genai: MagicMock) -> Proofreader:
 @patch("src.proofreader.genai")
 class TestProofread:
     async def test_returns_proofread_text(self, mock_genai: MagicMock) -> None:
-        """LLMの校正結果が返される。"""
+        """LLMの構造化出力から校正結果が返される。"""
         proofreader = _make_proofreader(mock_genai)
         mock_response = MagicMock()
-        mock_response.text = "校正済みテキスト"
+        mock_response.parsed = ProofreadResult(corrected_text="校正済みテキスト")
         mock_genai.Client.return_value.aio.models.generate_content = AsyncMock(
             return_value=mock_response
         )
@@ -36,11 +38,13 @@ class TestProofread:
 
         assert result == "校正済みテキスト"
 
-    async def test_sends_prompt_with_text(self, mock_genai: MagicMock) -> None:
-        """プロンプトとテキストが結合されてLLMに送信される。"""
+    async def test_system_instruction_separated_from_contents(
+        self, mock_genai: MagicMock
+    ) -> None:
+        """プロンプトがsystem_instructionとして分離され、contentsにはユーザー入力のみ渡される。"""
         proofreader = _make_proofreader(mock_genai)
         mock_response = MagicMock()
-        mock_response.text = "結果"
+        mock_response.parsed = ProofreadResult(corrected_text="結果")
         mock_generate = AsyncMock(return_value=mock_response)
         mock_genai.Client.return_value.aio.models.generate_content = mock_generate
 
@@ -48,7 +52,12 @@ class TestProofread:
 
         mock_generate.assert_called_once_with(
             model="gemini-3.1-flash-lite-preview",
-            contents="校正してください\n\n入力テキスト",
+            contents="入力テキスト",
+            config=types.GenerateContentConfig(
+                system_instruction="校正してください",
+                response_mime_type="application/json",
+                response_schema=ProofreadResult,
+            ),
         )
 
     async def test_empty_text_returns_as_is(self, mock_genai: MagicMock) -> None:
@@ -83,11 +92,11 @@ class TestProofread:
         with pytest.raises(RuntimeError, match="API error"):
             await proofreader.proofread("テスト")
 
-    async def test_none_response_returns_original(self, mock_genai: MagicMock) -> None:
-        """LLMがNoneを返した場合、元のテキストを返す。"""
+    async def test_parse_failure_returns_original(self, mock_genai: MagicMock) -> None:
+        """構造化出力のパースに失敗した場合、元のテキストを返す。"""
         proofreader = _make_proofreader(mock_genai)
         mock_response = MagicMock()
-        mock_response.text = None
+        mock_response.parsed = None
         mock_genai.Client.return_value.aio.models.generate_content = AsyncMock(
             return_value=mock_response
         )
