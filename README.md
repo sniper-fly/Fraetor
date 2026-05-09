@@ -12,10 +12,27 @@ uv sync
 
 ### シークレット
 
-`pass` コマンドに以下のエントリが必要:
+AWS SSM Parameter Store (SecureString) に以下 4 つを作成し、 SSO 経由で取得します。
 
-- `api/azure_stt_key` — Azure Speech Services キー
-- `api/gemini` — Google AI (Gemini) API キー
+- Azure Speech Services キー
+- Azure MAI API キー
+- Azure MAI エンドポイント
+- Vertex AI サービスアカウント JSON
+
+`.env.example` を `.env` にコピーし、各 SSM パラメータパスを記入してください。
+
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+
+AWS への認証は SSO セッションを使います。
+
+```bash
+aws sso login --profile <your-profile>
+export AWS_PROFILE=<your-profile>
+export AWS_REGION=<your-region>
+```
 
 ### 起動
 

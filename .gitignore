@@ -1,6 +1,11 @@
 # Project specific
 azure_stt_key
 
+# Environment variables (local secrets / SSM パス指定など)
+.env
+.env.*
+!.env.example
+
 # Python
 __pycache__/
 *.py[cod]
