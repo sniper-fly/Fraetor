@@ -18,6 +18,8 @@ dependencies = [
     "google-genai>=1.71.0",
     "numpy>=2.4.3",
     "pydantic>=2.12.5",
+    "pyperclip>=1.11.0",
+    "python-dotenv>=1.2.2",
     "sounddevice>=0.5.5",
     "sse-starlette>=3.3.3",
     "uvicorn[standard]>=0.42.0",
@@ -80,6 +82,11 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "google.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pyperclip"
+ignore_missing_imports = true
+follow_untyped_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
