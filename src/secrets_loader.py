@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 import boto3
@@ -11,17 +12,17 @@ if TYPE_CHECKING:
     from mypy_boto3_ssm import SSMClient
 
 
-_PARAM_AZURE_SPEECH_KEY = "/pass/api/azure_stt_key"
-_PARAM_MAI_API_KEY = "/pass/api/azure_mai_resource"
-_PARAM_MAI_ENDPOINT = "/pass/endpoint/mai_for_stt_resource"
-_PARAM_VERTEX_SA = "/pass/gc/ai_service_account"
+_ENV_AZURE_SPEECH_KEY = "FRAETOR_SSM_AZURE_SPEECH_KEY"
+_ENV_MAI_API_KEY = "FRAETOR_SSM_MAI_API_KEY"
+_ENV_MAI_ENDPOINT = "FRAETOR_SSM_MAI_ENDPOINT"
+_ENV_VERTEX_SA = "FRAETOR_SSM_VERTEX_SA"
 
-_PARAM_NAMES = [
-    _PARAM_AZURE_SPEECH_KEY,
-    _PARAM_MAI_API_KEY,
-    _PARAM_MAI_ENDPOINT,
-    _PARAM_VERTEX_SA,
-]
+_ENV_VARS = (
+    _ENV_AZURE_SPEECH_KEY,
+    _ENV_MAI_API_KEY,
+    _ENV_MAI_ENDPOINT,
+    _ENV_VERTEX_SA,
+)
 
 _SSO_LOGIN_HINT = (
     "AWS SSO セッションが切れています。"
@@ -39,16 +40,33 @@ class Secrets(BaseModel):
     vertex_project: str
 
 
+def _resolve_param_names() -> tuple[str, str, str, str]:
+    missing = [name for name in _ENV_VARS if not os.environ.get(name)]
+    if missing:
+        msg = f"環境変数が未設定です: {missing}"
+        raise RuntimeError(msg)
+    return (
+        os.environ[_ENV_AZURE_SPEECH_KEY],
+        os.environ[_ENV_MAI_API_KEY],
+        os.environ[_ENV_MAI_ENDPOINT],
+        os.environ[_ENV_VERTEX_SA],
+    )
+
+
 def load_secrets(client: SSMClient | None = None) -> Secrets:
     """AWS SSM Parameter Store から SecureString を一括取得して Secrets を返す。
 
+    SSM パラメータ名は環境変数 FRAETOR_SSM_* から解決する。
     AWS_PROFILE / AWS_REGION 環境変数に従う。SSO セッション切れ時は
     `aws sso login` を案内する RuntimeError を送出する。
     """
+    azure_path, mai_key_path, mai_endpoint_path, vertex_sa_path = _resolve_param_names()
+    param_names = [azure_path, mai_key_path, mai_endpoint_path, vertex_sa_path]
+
     ssm = client if client is not None else boto3.client("ssm")
     try:
         response = ssm.get_parameters(
-            Names=_PARAM_NAMES,
+            Names=param_names,
             WithDecryption=True,
         )
     except (SSOTokenLoadError, UnauthorizedSSOTokenError) as exc:
@@ -61,7 +79,7 @@ def load_secrets(client: SSMClient | None = None) -> Secrets:
 
     values = {p["Name"]: p["Value"] for p in response["Parameters"]}
 
-    sa_raw = values[_PARAM_VERTEX_SA]
+    sa_raw = values[vertex_sa_path]
     try:
         vertex_sa_info: dict[str, Any] = json.loads(sa_raw)
     except json.JSONDecodeError as exc:
@@ -69,9 +87,9 @@ def load_secrets(client: SSMClient | None = None) -> Secrets:
         raise RuntimeError(msg) from exc
 
     return Secrets(
-        azure_speech_key=values[_PARAM_AZURE_SPEECH_KEY],
-        mai_api_key=values[_PARAM_MAI_API_KEY],
-        mai_endpoint=values[_PARAM_MAI_ENDPOINT],
+        azure_speech_key=values[azure_path],
+        mai_api_key=values[mai_key_path],
+        mai_endpoint=values[mai_endpoint_path],
         vertex_sa_info=vertex_sa_info,
         vertex_project=str(vertex_sa_info.get("project_id", "")),
     )

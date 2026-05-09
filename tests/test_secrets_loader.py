@@ -15,13 +15,22 @@ if TYPE_CHECKING:
     from mypy_boto3_ssm import SSMClient
 
 
-_PARAM_AZURE = "/pass/api/azure_stt_key"
-_PARAM_MAI_KEY = "/pass/api/azure_mai_resource"
-_PARAM_MAI_ENDPOINT = "/pass/endpoint/mai_for_stt_resource"
-_PARAM_VERTEX_SA = "/pass/gc/ai_service_account"
+_PARAM_AZURE = "/test/azure_stt_key"
+_PARAM_MAI_KEY = "/test/mai_api_key"
+_PARAM_MAI_ENDPOINT = "/test/mai_endpoint"
+_PARAM_VERTEX_SA = "/test/vertex_sa"
 _ALL_PARAMS = [_PARAM_AZURE, _PARAM_MAI_KEY, _PARAM_MAI_ENDPOINT, _PARAM_VERTEX_SA]
 
 _FAKE_SA = {"project_id": "test-project", "type": "service_account"}
+
+
+@pytest.fixture(autouse=True)
+def _set_param_envs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SSM パラメータ名を解決する環境変数をテスト用ダミーパスに固定する。"""
+    monkeypatch.setenv("FRAETOR_SSM_AZURE_SPEECH_KEY", _PARAM_AZURE)
+    monkeypatch.setenv("FRAETOR_SSM_MAI_API_KEY", _PARAM_MAI_KEY)
+    monkeypatch.setenv("FRAETOR_SSM_MAI_ENDPOINT", _PARAM_MAI_ENDPOINT)
+    monkeypatch.setenv("FRAETOR_SSM_VERTEX_SA", _PARAM_VERTEX_SA)
 
 
 def _make_ssm_client() -> SSMClient:
@@ -104,4 +113,15 @@ class TestLoadSecrets:
         client = MagicMock()
         client.get_parameters.side_effect = UnauthorizedSSOTokenError()
         with pytest.raises(RuntimeError, match="aws sso login"):
+            load_secrets(client=client)
+
+
+class TestResolveParamNames:
+    def test_raises_when_env_var_missing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("FRAETOR_SSM_AZURE_SPEECH_KEY", raising=False)
+        client = _make_ssm_client()
+        with pytest.raises(RuntimeError, match="FRAETOR_SSM_AZURE_SPEECH_KEY"):
             load_secrets(client=client)

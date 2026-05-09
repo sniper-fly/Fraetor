@@ -194,7 +194,7 @@ PROOFREAD_TIMEOUT_SEC = 15           # 校正 API タイムアウト
 |------|------|
 | 対応環境 | Linux (X11 / Wayland) |
 | 外部サービス | Azure Speech Services アカウント、Google Cloud Vertex AI |
-| 認証情報管理 | `pass` コマンド (エントリ: `api/azure_stt_key`, `gc/ai_service_account`)。起動時に1回取得 |
+| 認証情報管理 | AWS SSM Parameter Store (SecureString) を AWS SSO セッション経由で取得。SSM パラメータ名は環境変数 `FRAETOR_SSM_*` で指定。起動時に1回取得 |
 | パッケージ管理 | uv (pyproject.toml + uv.lock) |
 | 設定ファイル | 各種タイムアウト等は定数で管理 |
 
