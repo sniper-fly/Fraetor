@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock, patch
 
-from src.stt import AzureSttClient
+from src.stt_azure import AzureSttClient
 
 
-@patch("src.stt.speechsdk")
+@patch("src.stt_azure.speechsdk")
 class TestAzureSttClientInit:
     def test_configures_speech_config(self, mock_sdk: MagicMock) -> None:
         """design.md: Azure Speech Services (japaneast, ja-JP)"""
@@ -55,7 +55,7 @@ class TestAzureSttClientInit:
         )
 
 
-@patch("src.stt.speechsdk")
+@patch("src.stt_azure.speechsdk")
 class TestAzureSttClientEvents:
     async def test_recognizing_enqueues_interim(self, mock_sdk: MagicMock) -> None:
         queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
@@ -118,7 +118,7 @@ class TestAzureSttClientEvents:
         evt.cancellation_details.reason = mock_sdk.CancellationReason.Error
         evt.cancellation_details.error_details = "auth failed"
 
-        with patch("src.stt.logger") as mock_logger:
+        with patch("src.stt_azure.logger") as mock_logger:
             client._on_canceled(evt)
             mock_logger.error.assert_called_once()
 
@@ -136,7 +136,7 @@ class TestAzureSttClientEvents:
         assert queue.empty()
 
 
-@patch("src.stt.speechsdk")
+@patch("src.stt_azure.speechsdk")
 class TestAzureSttClientLifecycle:
     async def test_start_begins_recognition(self, mock_sdk: MagicMock) -> None:
         queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
@@ -163,11 +163,11 @@ class TestAzureSttClientLifecycle:
         recognizer.stop_continuous_recognition_async.assert_called_once()
         assert client._loop is None
 
-    def test_write_audio_forwards_to_push_stream(self, mock_sdk: MagicMock) -> None:
+    def test_feed_audio_forwards_to_push_stream(self, mock_sdk: MagicMock) -> None:
         client = AzureSttClient(asyncio.Queue())
         audio_bytes = b"\x00\x01\x02\x03"
 
-        client.write_audio(audio_bytes)
+        client.feed_audio(audio_bytes)
 
         push_stream = mock_sdk.audio.PushAudioInputStream.return_value
         push_stream.write.assert_called_once_with(audio_bytes)

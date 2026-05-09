@@ -1,16 +1,27 @@
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 # --- セッション ---
 MAX_SESSION_DURATION_SEC: int = 180
 
-# --- Azure STT ---
+# --- STT エンジン選択 ---
+STT_ENGINE: Literal["azure", "mai"] = "mai"
+
+# --- Azure STT (ストリーミング) ---
 STABLE_PARTIAL_RESULT_THRESHOLD: int = 3
 AZURE_REGION: str = "japaneast"
 AZURE_LANGUAGE: str = "ja-JP"
 STT_SAMPLE_RATE: int = 16000
+
+# --- MAI Transcribe (バッチ, US リソース) ---
+# SDK はリソースエンドポイント形式
+# (https://<resource>.cognitiveservices.azure.com) を期待
+MAI_ENDPOINT: str = ""
+MAI_LOCALE: str = "ja"
+MAI_MODEL_NAME: str = "mai-transcribe-1"
+MAI_TIMEOUT_SEC: int = 60
 
 # --- サーバー ---
 SERVER_HOST: str = "127.0.0.1"
@@ -34,11 +45,13 @@ PROOFREAD_PROMPT: str = (
 
 # --- シークレット (init_secrets() で設定) ---
 AZURE_SPEECH_KEY: str = ""
+MAI_API_KEY: str = ""
 VERTEX_SA_INFO: dict[str, Any] = {}
 VERTEX_PROJECT: str = ""
 
 # --- pass エントリパス ---
 _PASS_ENTRY_AZURE: str = "api/azure_stt_key"  # noqa: S105
+_PASS_ENTRY_MAI: str = "api/azure_mai_resource"  # noqa: S105
 _PASS_ENTRY_VERTEX_SA: str = "gc/ai_service_account"  # noqa: S105
 
 
@@ -58,8 +71,9 @@ def _read_pass(entry: str) -> str:
 
 def init_secrets() -> None:
     """passコマンドからAPIキーを取得し、モジュール変数に設定する。"""
-    global AZURE_SPEECH_KEY, VERTEX_SA_INFO, VERTEX_PROJECT  # noqa: PLW0603
+    global AZURE_SPEECH_KEY, MAI_API_KEY, VERTEX_SA_INFO, VERTEX_PROJECT  # noqa: PLW0603
     AZURE_SPEECH_KEY = _read_pass(_PASS_ENTRY_AZURE)
+    MAI_API_KEY = _read_pass(_PASS_ENTRY_MAI)
 
     sa_json = _read_pass(_PASS_ENTRY_VERTEX_SA)
     VERTEX_SA_INFO = json.loads(sa_json)
@@ -69,8 +83,10 @@ def init_secrets() -> None:
 def validate_api_keys() -> list[str]:
     """APIキーの設定状態を確認し、警告メッセージのリストを返す。"""
     warnings: list[str] = []
-    if not AZURE_SPEECH_KEY:
+    if STT_ENGINE == "azure" and not AZURE_SPEECH_KEY:
         warnings.append("AZURE_SPEECH_KEY が未設定です。音声認識は利用できません。")
+    if STT_ENGINE == "mai" and not MAI_API_KEY:
+        warnings.append("MAI_API_KEY が未設定です。音声認識は利用できません。")
     if not VERTEX_SA_INFO:
         warnings.append("VERTEX_SA_INFO が未設定です。テキスト校正は利用できません。")
     return warnings

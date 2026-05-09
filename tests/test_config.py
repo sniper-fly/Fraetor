@@ -15,6 +15,7 @@ _FAKE_SA_JSON = json.dumps({"project_id": "test-project", "type": "service_accou
 def _fake_pass_outputs() -> dict[str, str]:
     return {
         "api/azure_stt_key": "test-azure-key\n",
+        "api/azure_mai_resource": "test-mai-key\n",
         "gc/ai_service_account": _FAKE_SA_JSON + "\n",
     }
 
@@ -37,6 +38,7 @@ class TestInitSecrets:
         init_secrets()
 
         assert config.AZURE_SPEECH_KEY == "test-azure-key"
+        assert config.MAI_API_KEY == "test-mai-key"
         assert config.VERTEX_SA_INFO["project_id"] == "test-project"
         assert config.VERTEX_PROJECT == "test-project"
 
@@ -59,16 +61,18 @@ class TestInitSecrets:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Vertex SAのpassコマンド失敗時にRuntimeErrorが発生する。"""
-        call_count = 0
+        outputs = {
+            "api/azure_stt_key": "azure-key\n",
+            "api/azure_mai_resource": "mai-key\n",
+        }
 
         def fake_run(
             cmd: list[str], **_kwargs: object
         ) -> subprocess.CompletedProcess[str]:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
+            entry = cmd[2]
+            if entry in outputs:
                 return subprocess.CompletedProcess(
-                    cmd, returncode=0, stdout="azure-key\n", stderr=""
+                    cmd, returncode=0, stdout=outputs[entry], stderr=""
                 )
             return subprocess.CompletedProcess(
                 cmd, returncode=1, stdout="", stderr="entry not found"
@@ -84,18 +88,32 @@ class TestInitSecrets:
 
 
 class TestValidateApiKeys:
-    def test_no_warnings_when_all_keys_set(
+    def test_no_warnings_when_azure_engine_and_keys_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr("src.config.STT_ENGINE", "azure")
         monkeypatch.setattr("src.config.AZURE_SPEECH_KEY", "azure-key")
+        monkeypatch.setattr("src.config.MAI_API_KEY", "")
         monkeypatch.setattr("src.config.VERTEX_SA_INFO", {"project_id": "test-project"})
 
         assert validate_api_keys() == []
 
-    def test_warns_when_azure_key_missing(
+    def test_no_warnings_when_mai_engine_and_keys_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr("src.config.STT_ENGINE", "mai")
         monkeypatch.setattr("src.config.AZURE_SPEECH_KEY", "")
+        monkeypatch.setattr("src.config.MAI_API_KEY", "mai-key")
+        monkeypatch.setattr("src.config.VERTEX_SA_INFO", {"project_id": "test-project"})
+
+        assert validate_api_keys() == []
+
+    def test_warns_when_azure_key_missing_under_azure_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.config.STT_ENGINE", "azure")
+        monkeypatch.setattr("src.config.AZURE_SPEECH_KEY", "")
+        monkeypatch.setattr("src.config.MAI_API_KEY", "mai-key")
         monkeypatch.setattr("src.config.VERTEX_SA_INFO", {"project_id": "test-project"})
 
         warnings = validate_api_keys()
@@ -103,10 +121,25 @@ class TestValidateApiKeys:
         assert len(warnings) == 1
         assert "AZURE_SPEECH_KEY" in warnings[0]
 
+    def test_warns_when_mai_key_missing_under_mai_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.config.STT_ENGINE", "mai")
+        monkeypatch.setattr("src.config.AZURE_SPEECH_KEY", "azure-key")
+        monkeypatch.setattr("src.config.MAI_API_KEY", "")
+        monkeypatch.setattr("src.config.VERTEX_SA_INFO", {"project_id": "test-project"})
+
+        warnings = validate_api_keys()
+
+        assert len(warnings) == 1
+        assert "MAI_API_KEY" in warnings[0]
+
     def test_warns_when_vertex_sa_missing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr("src.config.STT_ENGINE", "azure")
         monkeypatch.setattr("src.config.AZURE_SPEECH_KEY", "azure-key")
+        monkeypatch.setattr("src.config.MAI_API_KEY", "mai-key")
         monkeypatch.setattr("src.config.VERTEX_SA_INFO", {})
 
         warnings = validate_api_keys()

@@ -170,6 +170,15 @@ function connectSSE() {
     updateEditorInterim('');
   });
 
+  evtSource.addEventListener('processing', (e) => {
+    const data = JSON.parse(e.data);
+    updateEditorInterim(data.message || '文字起こし中...');
+  });
+
+  evtSource.addEventListener('processing_done', () => {
+    updateEditorInterim('');
+  });
+
   evtSource.addEventListener('status', (e) => {
     const data = JSON.parse(e.data);
     updateRecordingUI(data.recording);

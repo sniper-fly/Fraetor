@@ -7,22 +7,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.session_manager import SessionManager
 from src.state import AppState
+from src.stt_base import SttCapabilities
 
 
 def _setup_mocks(
-    mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+    mock_factory: MagicMock,
+    mock_audio_cls: MagicMock,
+    *,
+    post_processing: bool = False,
 ) -> tuple[MagicMock, MagicMock]:
-    """AzureSttClient と AudioCapture のモックを設定する。"""
-    mock_stt = mock_stt_cls.return_value
+    """create_stt_engine と AudioCapture のモックを設定する。"""
+    mock_stt = mock_factory.return_value
     mock_stt.start = AsyncMock()
     mock_stt.stop = AsyncMock()
-    mock_stt.write_audio = MagicMock()
+    mock_stt.feed_audio = MagicMock()
+    mock_stt.capabilities = SttCapabilities(
+        streaming=not post_processing,
+        post_processing=post_processing,
+    )
     mock_audio = mock_audio_cls.return_value
     return mock_stt, mock_audio
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
+@patch("src.session_manager.create_stt_engine")
 class TestStartSession:
     async def test_creates_session_with_correct_fields(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
@@ -55,7 +63,7 @@ class TestStartSession:
 
         mock_stt.start.assert_called_once()
         mock_audio_cls.return_value.start.assert_called_once()
-        mock_audio_cls.assert_called_once_with(mock_stt.write_audio)
+        mock_audio_cls.assert_called_once_with(mock_stt.feed_audio)
 
         await sm.stop_session()
 
@@ -92,7 +100,7 @@ class TestStartSession:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
+@patch("src.session_manager.create_stt_engine")
 class TestStopSession:
     async def test_stops_audio_and_stt(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
@@ -211,7 +219,7 @@ class TestStopSession:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
+@patch("src.session_manager.create_stt_engine")
 class TestSttEventProcessing:
     async def test_interim_broadcasts_sse(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
@@ -307,7 +315,7 @@ class TestSttEventProcessing:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
+@patch("src.session_manager.create_stt_engine")
 class TestSessionTimeout:
     @patch("src.session_manager.MAX_SESSION_DURATION_SEC", 0.1)
     async def test_auto_stops_after_max_duration(
@@ -329,7 +337,7 @@ class TestSessionTimeout:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.AzureSttClient")
+@patch("src.session_manager.create_stt_engine")
 class TestSessionStartFailure:
     async def test_stt_failure_aborts_session(
         self,
@@ -382,3 +390,51 @@ class TestSessionStartFailure:
 
         assert app_state.recording is False
         assert app_state.current_session is None
+
+
+@patch("src.session_manager.AudioCapture")
+@patch("src.session_manager.create_stt_engine")
+class TestPostProcessingNotifications:
+    """capabilities.post_processing 駆動の processing イベント通知。"""
+
+    async def test_post_processing_engine_emits_processing_events(
+        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+    ) -> None:
+        """MAI など post_processing=True のエンジンでは
+        stop時に processing/processing_done が発火される。"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+        sub = app_state.broadcaster.subscribe()
+
+        await sm.stop_session()
+
+        messages: list[dict[str, str]] = []
+        while not sub.empty():
+            messages.append(sub.get_nowait())
+        events = [m["event"] for m in messages]
+        assert "processing" in events
+        assert "processing_done" in events
+        # processing → processing_done の順序を保証
+        assert events.index("processing") < events.index("processing_done")
+
+    async def test_streaming_engine_does_not_emit_processing_events(
+        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+    ) -> None:
+        """Azure など post_processing=False のエンジンでは
+        processing 系イベントは発火されない。"""
+        _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=False)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+        sub = app_state.broadcaster.subscribe()
+
+        await sm.stop_session()
+
+        messages: list[dict[str, str]] = []
+        while not sub.empty():
+            messages.append(sub.get_nowait())
+        events = [m["event"] for m in messages]
+        assert "processing" not in events
+        assert "processing_done" not in events

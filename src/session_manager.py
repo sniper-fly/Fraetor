@@ -10,10 +10,11 @@ from uuid import uuid4
 from src.audio import AudioCapture
 from src.config import MAX_SESSION_DURATION_SEC
 from src.models import Segment, Session
-from src.stt import AzureSttClient
+from src.stt_factory import create_stt_engine
 
 if TYPE_CHECKING:
     from src.state import AppState
+    from src.stt_base import SttEngine
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,13 @@ logger = logging.getLogger(__name__)
 class SessionManager:
     """セッションのライフサイクルを管理する。
 
-    録音開始時に AudioCapture + AzureSttClient を起動し、
+    録音開始時に AudioCapture + STT エンジンを起動し、
     STTイベントをセグメントに変換してSSEでブラウザに配信する。
     """
 
     def __init__(self, app_state: AppState) -> None:
         self._app_state = app_state
-        self._stt_client: AzureSttClient | None = None
+        self._stt_client: SttEngine | None = None
         self._audio_capture: AudioCapture | None = None
         self._event_task: asyncio.Task[None] | None = None
         self._timeout_task: asyncio.Task[None] | None = None
@@ -48,15 +49,15 @@ class SessionManager:
         self._next_segment_id = 0
 
         try:
-            self._stt_client = AzureSttClient(self._app_state.stt_event_queue)
+            self._stt_client = create_stt_engine(self._app_state.stt_event_queue)
             await self._stt_client.start()
         except Exception:
-            logger.exception("Azure STT start failed")
+            logger.exception("STT start failed")
             await self._abort_session_start()
             return
 
         try:
-            self._audio_capture = AudioCapture(self._stt_client.write_audio)
+            self._audio_capture = AudioCapture(self._stt_client.feed_audio)
             self._audio_capture.start()
         except Exception:
             logger.exception("Audio capture start failed")
@@ -97,9 +98,20 @@ class SessionManager:
             self._audio_capture.stop()
             self._audio_capture = None
 
+        post_processing = bool(
+            self._stt_client and self._stt_client.capabilities.post_processing
+        )
+        if post_processing:
+            await self._app_state.broadcaster.broadcast(
+                "processing", {"message": "文字起こし中..."}
+            )
+
         if self._stt_client:
             await self._stt_client.stop()
             self._stt_client = None
+
+        if post_processing:
+            await self._app_state.broadcaster.broadcast("processing_done", {})
 
         if self._event_task:
             self._event_task.cancel()

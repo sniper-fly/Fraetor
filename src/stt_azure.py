@@ -12,14 +12,17 @@ from src.config import (
     STABLE_PARTIAL_RESULT_THRESHOLD,
     STT_SAMPLE_RATE,
 )
+from src.stt_base import SttCapabilities, SttEngine
 
 logger = logging.getLogger(__name__)
 
+_CAPABILITIES = SttCapabilities(streaming=True, post_processing=False)
 
-class AzureSttClient:
+
+class AzureSttClient(SttEngine):
     """Azure Speech-to-Text ストリーミングクライアント。
 
-    セッション毎に生成・破棄する。write_audio にPCMバイトを渡すと
+    セッション毎に生成・破棄する。feed_audio にPCMバイトを渡すと
     Azure STT に送信され、認識結果が stt_event_queue に入る。
     """
 
@@ -27,7 +30,7 @@ class AzureSttClient:
         self,
         stt_event_queue: asyncio.Queue[dict[str, str]],
     ) -> None:
-        self._queue = stt_event_queue
+        super().__init__(stt_event_queue)
         self._loop: asyncio.AbstractEventLoop | None = None
 
         stream_format = speechsdk.audio.AudioStreamFormat(
@@ -58,7 +61,11 @@ class AzureSttClient:
         self._recognizer.recognized.connect(self._on_recognized)
         self._recognizer.canceled.connect(self._on_canceled)
 
-    def write_audio(self, buffer: bytes) -> None:
+    @property
+    def capabilities(self) -> SttCapabilities:
+        return _CAPABILITIES
+
+    def feed_audio(self, buffer: bytes) -> None:
         """PCM音声データを Azure STT に送信する。"""
         self._push_stream.write(buffer)
 
