@@ -1,45 +1,28 @@
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
+import pyperclip
 import pytest
 
 from src.clipboard import copy_to_clipboard
 
 
 class TestCopyToClipboard:
-    async def test_calls_xclip_with_selection_clipboard(self) -> None:
-        """design.md: xclip でクリップボードにコピー"""
-        mock_proc = AsyncMock()
-        mock_proc.communicate.return_value = (b"", b"")
-        mock_proc.returncode = 0
-
-        with patch(
-            "src.clipboard.asyncio.create_subprocess_exec",
-            return_value=mock_proc,
-        ) as mock_exec:
+    async def test_calls_pyperclip_copy_with_text(self) -> None:
+        """pyperclip.copy が指定テキストで呼ばれる"""
+        with patch("src.clipboard.pyperclip.copy") as mock_copy:
             await copy_to_clipboard("テスト文章")
 
-            mock_exec.assert_called_once_with(
-                "xclip",
-                "-selection",
-                "clipboard",
-                stdin=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            mock_proc.communicate.assert_called_once_with(input="テスト文章".encode())
+            mock_copy.assert_called_once_with("テスト文章")
 
-    async def test_raises_on_nonzero_returncode(self) -> None:
-        mock_proc = AsyncMock()
-        mock_proc.communicate.return_value = (b"", b"error msg")
-        mock_proc.returncode = 1
-
+    async def test_raises_on_pyperclip_exception(self) -> None:
+        """pyperclip.copy が PyperclipException を投げる場合は RuntimeError に変換"""
         with (
             patch(
-                "src.clipboard.asyncio.create_subprocess_exec",
-                return_value=mock_proc,
+                "src.clipboard.pyperclip.copy",
+                side_effect=pyperclip.PyperclipException("no clipboard backend"),
             ),
-            pytest.raises(RuntimeError, match="xclip failed"),
+            pytest.raises(RuntimeError, match="pyperclip failed"),
         ):
             await copy_to_clipboard("テスト")
