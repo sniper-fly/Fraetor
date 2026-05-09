@@ -1,90 +1,37 @@
 from __future__ import annotations
 
-import json
-import subprocess
-from unittest.mock import MagicMock
-
-import pytest
+from typing import TYPE_CHECKING
 
 from src import config
 from src.config import init_secrets, validate_api_keys
+from src.secrets_loader import Secrets
 
-_FAKE_SA_JSON = json.dumps({"project_id": "test-project", "type": "service_account"})
-
-
-def _fake_pass_outputs() -> dict[str, str]:
-    return {
-        "api/azure_stt_key": "test-azure-key\n",
-        "api/azure_mai_resource": "test-mai-key\n",
-        "gc/ai_service_account": _FAKE_SA_JSON + "\n",
-    }
+if TYPE_CHECKING:
+    import pytest
 
 
 class TestInitSecrets:
-    def test_sets_keys_from_pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """passコマンドの出力がモジュール変数に設定される。"""
-        outputs = _fake_pass_outputs()
-
-        def fake_run(
-            cmd: list[str], **_kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
-            entry = cmd[2]
-            return subprocess.CompletedProcess(
-                cmd, returncode=0, stdout=outputs[entry], stderr=""
-            )
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
+    def test_assigns_module_variables(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """load_secrets() の戻り値が config モジュール変数に反映される。"""
+        fake = Secrets(
+            azure_speech_key="azure-key",
+            mai_api_key="mai-key",
+            mai_endpoint="https://mai.example/",
+            vertex_sa_info={"project_id": "test-project", "type": "service_account"},
+            vertex_project="test-project",
+        )
+        monkeypatch.setattr("src.config.load_secrets", lambda: fake)
 
         init_secrets()
 
-        assert config.AZURE_SPEECH_KEY == "test-azure-key"
-        assert config.MAI_API_KEY == "test-mai-key"
-        assert config.VERTEX_SA_INFO["project_id"] == "test-project"
-        assert config.VERTEX_PROJECT == "test-project"
-
-    def test_raises_on_pass_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """passコマンド失敗時にRuntimeErrorが発生する。"""
-        failed = subprocess.CompletedProcess(
-            ["pass", "show", "api/azure_stt_key"],
-            returncode=1,
-            stdout="",
-            stderr="entry not found",
-        )
-        monkeypatch.setattr(subprocess, "run", MagicMock(return_value=failed))
-
-        with pytest.raises(
-            RuntimeError, match="pass show api/azure_stt_key に失敗しました"
-        ):
-            init_secrets()
-
-    def test_raises_on_vertex_pass_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Vertex SAのpassコマンド失敗時にRuntimeErrorが発生する。"""
-        outputs = {
-            "api/azure_stt_key": "azure-key\n",
-            "api/azure_mai_resource": "mai-key\n",
+        assert config.AZURE_SPEECH_KEY == "azure-key"
+        assert config.MAI_API_KEY == "mai-key"
+        assert config.MAI_ENDPOINT == "https://mai.example/"
+        assert config.VERTEX_SA_INFO == {
+            "project_id": "test-project",
+            "type": "service_account",
         }
-
-        def fake_run(
-            cmd: list[str], **_kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
-            entry = cmd[2]
-            if entry in outputs:
-                return subprocess.CompletedProcess(
-                    cmd, returncode=0, stdout=outputs[entry], stderr=""
-                )
-            return subprocess.CompletedProcess(
-                cmd, returncode=1, stdout="", stderr="entry not found"
-            )
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-
-        with pytest.raises(
-            RuntimeError,
-            match="pass show gc/ai_service_account に失敗しました",
-        ):
-            init_secrets()
+        assert config.VERTEX_PROJECT == "test-project"
 
 
 class TestValidateApiKeys:

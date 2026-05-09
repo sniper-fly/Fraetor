@@ -1,7 +1,7 @@
-import json
-import subprocess
 from pathlib import Path
 from typing import Any, Literal
+
+from src.secrets_loader import load_secrets
 
 # --- セッション ---
 MAX_SESSION_DURATION_SEC: int = 180
@@ -49,35 +49,16 @@ MAI_API_KEY: str = ""
 VERTEX_SA_INFO: dict[str, Any] = {}
 VERTEX_PROJECT: str = ""
 
-# --- pass エントリパス ---
-_PASS_ENTRY_AZURE: str = "api/azure_stt_key"  # noqa: S105
-_PASS_ENTRY_MAI: str = "api/azure_mai_resource"  # noqa: S105
-_PASS_ENTRY_VERTEX_SA: str = "gc/ai_service_account"  # noqa: S105
-
-
-def _read_pass(entry: str) -> str:
-    """passコマンドからシークレットを取得する。"""
-    result = subprocess.run(  # noqa: S603
-        ["pass", "show", entry],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        msg = f"pass show {entry} に失敗しました: {result.stderr.strip()}"
-        raise RuntimeError(msg)
-    return result.stdout.strip()
-
 
 def init_secrets() -> None:
-    """passコマンドからAPIキーを取得し、モジュール変数に設定する。"""
-    global AZURE_SPEECH_KEY, MAI_API_KEY, VERTEX_SA_INFO, VERTEX_PROJECT  # noqa: PLW0603
-    AZURE_SPEECH_KEY = _read_pass(_PASS_ENTRY_AZURE)
-    MAI_API_KEY = _read_pass(_PASS_ENTRY_MAI)
-
-    sa_json = _read_pass(_PASS_ENTRY_VERTEX_SA)
-    VERTEX_SA_INFO = json.loads(sa_json)
-    VERTEX_PROJECT = str(VERTEX_SA_INFO.get("project_id", ""))
+    """AWS SSM Parameter Store からシークレットを取得し、モジュール変数に設定する。"""
+    global AZURE_SPEECH_KEY, MAI_API_KEY, MAI_ENDPOINT, VERTEX_SA_INFO, VERTEX_PROJECT  # noqa: PLW0603
+    s = load_secrets()
+    AZURE_SPEECH_KEY = s.azure_speech_key
+    MAI_API_KEY = s.mai_api_key
+    MAI_ENDPOINT = s.mai_endpoint
+    VERTEX_SA_INFO = s.vertex_sa_info
+    VERTEX_PROJECT = s.vertex_project
 
 
 def validate_api_keys() -> list[str]:
