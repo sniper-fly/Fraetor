@@ -2,7 +2,7 @@
 
 ## 概要
 
-Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、Azure STT でリアルタイム認識、認識結果をブラウザにリアルタイム表示する。録音停止後、LLM による自動校正を経てテキストを編集、クリップボードにコピーする。
+Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、MAI Transcribe でバッチ認識、認識結果をブラウザにリアルタイム表示する。録音停止後、LLM による自動校正を経てテキストを編集、クリップボードにコピーする。
 
 ## アーキテクチャ
 
@@ -13,7 +13,7 @@ HTTP API (POST /api/toggle-recording) <-- DE キーバインド (curl)
   Python常駐プロセス (FastAPI)
          |
          v
-    Azure STT
+    MAI Transcribe
     (認識)
          |
          v
@@ -42,9 +42,9 @@ xclip でクリップボードにコピー
 | # | 要件 |
 |---|------|
 | 1 | Python 常駐プロセス (FastAPI) が HTTP API (`POST /api/toggle-recording`) で録音トグルを受け付け |
-| 2 | トグル操作 → Azure STT Streaming 接続 → マイクキャプチャ開始 |
-| 3 | Azure STT の interim → SSE でブラウザにリアルタイム表示（グレー） |
-| 4 | Azure STT の recognized → そのまま確定テキストとして SSE でブラウザに表示（緑） |
+| 2 | トグル操作 → MAI Transcribe 接続 → マイクキャプチャ開始 |
+| 3 | 録音停止時に MAI Transcribe でバッチ認識 → SSE でブラウザに表示 |
+| 4 | MAI Transcribe の recognized → そのまま確定テキストとして SSE でブラウザに表示（緑） |
 | 5 | 再トグル → 録音停止、STT キューの残りイベントを処理 |
 | 6 | 録音停止 → 校正ON時は LLM で自動校正 → textarea で確定テキストを編集 → クリップボードにコピー + JSONL に保存 |
 | 7 | セッション終了後 → セッション結果を JSONL に保存 |
@@ -108,7 +108,7 @@ xclip でクリップボードにコピー
 
 | 項目 | 仕様 |
 |------|------|
-| セッション開始 | `POST /api/toggle-recording` → Azure STT 接続 → マイクキャプチャ開始 |
+| セッション開始 | `POST /api/toggle-recording` → MAI Transcribe 接続 → マイクキャプチャ開始 |
 | セッション終了 | 再トグル、またはセッション時間上限 (3分) 到達 |
 | ブラウザ表示 | セッション開始時にメインタブの表示をリセット |
 | クリップボード | 当該セッションのテキストのみ |
@@ -119,13 +119,11 @@ xclip でクリップボードにコピー
 
 ```
 [録音中]
-  マイク -> sounddevice(PCM) -> Azure STT Streaming
-    -> recognizing -> SSE("interim", text)     -> ブラウザ (グレー表示)
-    -> recognized  -> SSE("recognized", seg-N) -> ブラウザ (緑表示/確定)
+  マイク -> sounddevice(PCM) -> MAI Transcribe (バッファリング)
 
 [再トグル or 3分経過]
-  録音停止 -> Azure STT切断
-    -> STTキューの残イベントを処理
+  録音停止 -> MAI Transcribe バッチ認識
+    -> recognized  -> SSE("recognized", seg-N) -> ブラウザ (緑表示/確定)
     -> session_end をブラウザに送信
     -> (校正ON時) ブラウザが POST /api/proofread でテキスト校正
        -> Vertex AI Gemini で校正 -> textarea 更新
@@ -139,7 +137,7 @@ xclip でクリップボードにコピー
 ```python
 class Segment(BaseModel):
     id: int
-    text: str            # Azure STT の認識結果
+    text: str            # MAI Transcribe の認識結果
 
 class Session(BaseModel):
     id: str              # UUID
@@ -162,11 +160,6 @@ class Session(BaseModel):
 
 ```python
 MAX_SESSION_DURATION_SEC = 180       # 最大セッション時間 (3分)
-STABLE_PARTIAL_RESULT_THRESHOLD = 3  # Azure STT の StablePartialResultThreshold
-                                     # partial result が安定とみなされるまでの閾値
-                                     # 値が大きいほど interim の変動が少なく安定するが遅延が増す
-AZURE_REGION = "japaneast"           # Azure Speech Services リージョン
-AZURE_LANGUAGE = "ja-JP"             # 認識言語
 STT_SAMPLE_RATE = 16000              # 音声サンプルレート
 
 # --- 校正 ---
@@ -181,7 +174,7 @@ PROOFREAD_TIMEOUT_SEC = 15           # 校正 API タイムアウト
 |---------|------|
 | 録音トグル | HTTP API (`POST /api/toggle-recording`) + DE キーバインド |
 | 音声キャプチャ | sounddevice |
-| STT | Azure Speech Services (Streaming) |
+| STT | MAI Transcribe (azure-ai-transcription SDK) |
 | テキスト校正 | Vertex AI Gemini (google-genai SDK) |
 | サーバー | FastAPI + SSE |
 | フロントエンド | HTMX + SSE + TailwindCSS (CDN) |
@@ -193,12 +186,7 @@ PROOFREAD_TIMEOUT_SEC = 15           # 校正 API タイムアウト
 | 項目 | 仕様 |
 |------|------|
 | 対応環境 | Linux (X11 / Wayland) |
-| 外部サービス | Azure Speech Services アカウント、Google Cloud Vertex AI |
+| 外部サービス | MAI Transcribe (Azure AI)、Google Cloud Vertex AI |
 | 認証情報管理 | AWS SSM Parameter Store (SecureString) を AWS SSO セッション経由で取得。SSM パラメータ名は環境変数 `FRAETOR_SSM_*` で指定。起動時に1回取得 |
 | パッケージ管理 | uv (pyproject.toml + uv.lock) |
 | 設定ファイル | 各種タイムアウト等は定数で管理 |
-
-## 参考資料
-https://learn.microsoft.com/ja-jp/python/api/azure-cognitiveservices-speech/azure.cognitiveservices.speech?view=azure-python
-azure speech to text sdk は必要に応じてこちらの資料をWebFetchすること
-azureの接続情報は azure_stt_key に記載してある

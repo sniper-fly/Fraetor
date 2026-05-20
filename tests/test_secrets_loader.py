@@ -15,11 +15,10 @@ if TYPE_CHECKING:
     from mypy_boto3_ssm import SSMClient
 
 
-_PARAM_AZURE = "/test/azure_stt_key"
 _PARAM_MAI_KEY = "/test/mai_api_key"
 _PARAM_MAI_ENDPOINT = "/test/mai_endpoint"
 _PARAM_VERTEX_SA = "/test/vertex_sa"
-_ALL_PARAMS = [_PARAM_AZURE, _PARAM_MAI_KEY, _PARAM_MAI_ENDPOINT, _PARAM_VERTEX_SA]
+_ALL_PARAMS = [_PARAM_MAI_KEY, _PARAM_MAI_ENDPOINT, _PARAM_VERTEX_SA]
 
 _FAKE_SA = {"project_id": "test-project", "type": "service_account"}
 
@@ -27,7 +26,6 @@ _FAKE_SA = {"project_id": "test-project", "type": "service_account"}
 @pytest.fixture(autouse=True)
 def _set_param_envs(monkeypatch: pytest.MonkeyPatch) -> None:
     """SSM パラメータ名を解決する環境変数をテスト用ダミーパスに固定する。"""
-    monkeypatch.setenv("FRAETOR_SSM_AZURE_SPEECH_KEY", _PARAM_AZURE)
     monkeypatch.setenv("FRAETOR_SSM_MAI_API_KEY", _PARAM_MAI_KEY)
     monkeypatch.setenv("FRAETOR_SSM_MAI_ENDPOINT", _PARAM_MAI_ENDPOINT)
     monkeypatch.setenv("FRAETOR_SSM_VERTEX_SA", _PARAM_VERTEX_SA)
@@ -50,7 +48,6 @@ class TestLoadSecrets:
             "get_parameters",
             {
                 "Parameters": [
-                    _param(_PARAM_AZURE, "azure-key"),
                     _param(_PARAM_MAI_KEY, "mai-key"),
                     _param(_PARAM_MAI_ENDPOINT, "https://mai.example/"),
                     _param(_PARAM_VERTEX_SA, json.dumps(_FAKE_SA)),
@@ -61,7 +58,6 @@ class TestLoadSecrets:
         with stubber:
             secrets = load_secrets(client=client)
 
-        assert secrets.azure_speech_key == "azure-key"
         assert secrets.mai_api_key == "mai-key"
         assert secrets.mai_endpoint == "https://mai.example/"
         assert secrets.vertex_sa_info == _FAKE_SA
@@ -74,7 +70,6 @@ class TestLoadSecrets:
             "get_parameters",
             {
                 "Parameters": [
-                    _param(_PARAM_AZURE, "azure-key"),
                     _param(_PARAM_MAI_KEY, "mai-key"),
                     _param(_PARAM_VERTEX_SA, json.dumps(_FAKE_SA)),
                 ],
@@ -92,7 +87,6 @@ class TestLoadSecrets:
             "get_parameters",
             {
                 "Parameters": [
-                    _param(_PARAM_AZURE, "azure-key"),
                     _param(_PARAM_MAI_KEY, "mai-key"),
                     _param(_PARAM_MAI_ENDPOINT, "https://mai.example/"),
                     _param(_PARAM_VERTEX_SA, "not-json"),
@@ -121,7 +115,7 @@ class TestResolveParamNames:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.delenv("FRAETOR_SSM_AZURE_SPEECH_KEY", raising=False)
+        monkeypatch.delenv("FRAETOR_SSM_MAI_API_KEY", raising=False)
         client = _make_ssm_client()
-        with pytest.raises(RuntimeError, match="FRAETOR_SSM_AZURE_SPEECH_KEY"):
+        with pytest.raises(RuntimeError, match="FRAETOR_SSM_MAI_API_KEY"):
             load_secrets(client=client)

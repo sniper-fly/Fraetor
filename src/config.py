@@ -1,18 +1,12 @@
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from src.secrets_loader import load_secrets
 
 # --- セッション ---
 MAX_SESSION_DURATION_SEC: int = 180
 
-# --- STT エンジン選択 ---
-STT_ENGINE: Literal["azure", "mai"] = "mai"
-
-# --- Azure STT (ストリーミング) ---
-STABLE_PARTIAL_RESULT_THRESHOLD: int = 3
-AZURE_REGION: str = "japaneast"
-AZURE_LANGUAGE: str = "ja-JP"
+# --- STT 共通 ---
 STT_SAMPLE_RATE: int = 16000
 
 # --- MAI Transcribe (バッチ, US リソース) ---
@@ -44,7 +38,6 @@ PROOFREAD_PROMPT: str = (
 )
 
 # --- シークレット (init_secrets() で設定) ---
-AZURE_SPEECH_KEY: str = ""
 MAI_API_KEY: str = ""
 VERTEX_SA_INFO: dict[str, Any] = {}
 VERTEX_PROJECT: str = ""
@@ -52,9 +45,8 @@ VERTEX_PROJECT: str = ""
 
 def init_secrets() -> None:
     """AWS SSM Parameter Store からシークレットを取得し、モジュール変数に設定する。"""
-    global AZURE_SPEECH_KEY, MAI_API_KEY, MAI_ENDPOINT, VERTEX_SA_INFO, VERTEX_PROJECT  # noqa: PLW0603
+    global MAI_API_KEY, MAI_ENDPOINT, VERTEX_SA_INFO, VERTEX_PROJECT  # noqa: PLW0603
     s = load_secrets()
-    AZURE_SPEECH_KEY = s.azure_speech_key
     MAI_API_KEY = s.mai_api_key
     MAI_ENDPOINT = s.mai_endpoint
     VERTEX_SA_INFO = s.vertex_sa_info
@@ -64,9 +56,7 @@ def init_secrets() -> None:
 def validate_api_keys() -> list[str]:
     """APIキーの設定状態を確認し、警告メッセージのリストを返す。"""
     warnings: list[str] = []
-    if STT_ENGINE == "azure" and not AZURE_SPEECH_KEY:
-        warnings.append("AZURE_SPEECH_KEY が未設定です。音声認識は利用できません。")
-    if STT_ENGINE == "mai" and not MAI_API_KEY:
+    if not MAI_API_KEY:
         warnings.append("MAI_API_KEY が未設定です。音声認識は利用できません。")
     if not VERTEX_SA_INFO:
         warnings.append("VERTEX_SA_INFO が未設定です。テキスト校正は利用できません。")

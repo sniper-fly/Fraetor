@@ -1,6 +1,6 @@
 # Fraetor
 
-Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、Azure STT でリアルタイム認識、Gemini Live API で自動校正、校正完了後に自動コピー
+Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、MAI Transcribe で音声認識、Gemini で自動校正、校正完了後に自動コピー
 
 ## セットアップ
 
@@ -12,11 +12,10 @@ uv sync
 
 ### シークレット
 
-AWS SSM Parameter Store (SecureString) に以下 4 つを作成し、 SSO 経由で取得します。
+AWS SSM Parameter Store (SecureString) に以下 3 つを作成し、 SSO 経由で取得します。
 
-- Azure Speech Services キー
-- Azure MAI API キー
-- Azure MAI エンドポイント
+- MAI API キー
+- MAI エンドポイント
 - Vertex AI サービスアカウント JSON
 
 `.env.example` を `.env` にコピーし、各 SSM パラメータパスを記入してください。

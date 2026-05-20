@@ -58,7 +58,7 @@ class TestHistory:
     def test_returns_sessions_newest_first(
         self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """azure-stt-only-spec.md: 新しいセッションが上に表示"""
+        """新しいセッションが上に表示"""
         jsonl = tmp_path / "history.jsonl"
         jsonl.write_text(
             '{"id":"old","started_at":"2026-04-04T14:00:00","text":"古い"}\n'

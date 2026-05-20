@@ -10,7 +10,7 @@ from uuid import uuid4
 from src.audio import AudioCapture
 from src.config import MAX_SESSION_DURATION_SEC
 from src.models import Segment, Session
-from src.stt_factory import create_stt_engine
+from src.stt_mai import MaiTranscribeClient
 
 if TYPE_CHECKING:
     from src.state import AppState
@@ -49,7 +49,7 @@ class SessionManager:
         self._next_segment_id = 0
 
         try:
-            self._stt_client = create_stt_engine(self._app_state.stt_event_queue)
+            self._stt_client = MaiTranscribeClient(self._app_state.stt_event_queue)
             await self._stt_client.start()
         except Exception:
             logger.exception("STT start failed")

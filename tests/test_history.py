@@ -48,7 +48,7 @@ class TestSaveSession:
     def test_record_matches_design_format(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """azure-stt-only-spec.md: JSONL フォーマットに準拠したレコードが保存される"""
+        """JSONL フォーマットに準拠したレコードが保存される"""
         history_file = tmp_path / "history.jsonl"
         monkeypatch.setattr("src.history.HISTORY_DIR", tmp_path)
         monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
@@ -66,7 +66,7 @@ class TestSaveSession:
     def test_appends_multiple_sessions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """azure-stt-only-spec.md: セッション終了時に JSONL に追記"""
+        """セッション終了時に JSONL に追記"""
         history_file = tmp_path / "history.jsonl"
         monkeypatch.setattr("src.history.HISTORY_DIR", tmp_path)
         monkeypatch.setattr("src.history.HISTORY_FILE", history_file)
@@ -82,7 +82,7 @@ class TestSaveSession:
     def test_multiple_segments_concatenated(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """azure-stt-only-spec.md: 全セグメントのテキスト結合"""
+        """全セグメントのテキスト結合"""
         history_file = tmp_path / "history.jsonl"
         monkeypatch.setattr("src.history.HISTORY_DIR", tmp_path)
         monkeypatch.setattr("src.history.HISTORY_FILE", history_file)

@@ -16,7 +16,7 @@ def _setup_mocks(
     *,
     post_processing: bool = False,
 ) -> tuple[MagicMock, MagicMock]:
-    """create_stt_engine と AudioCapture のモックを設定する。"""
+    """MaiTranscribeClient と AudioCapture のモックを設定する。"""
     mock_stt = mock_factory.return_value
     mock_stt.start = AsyncMock()
     mock_stt.stop = AsyncMock()
@@ -30,12 +30,12 @@ def _setup_mocks(
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.create_stt_engine")
+@patch("src.session_manager.MaiTranscribeClient")
 class TestStartSession:
     async def test_creates_session_with_correct_fields(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
     ) -> None:
-        """azure-stt-only-spec.md: セッション開始 → Session 作成"""
+        """セッション開始 → Session 作成"""
         _setup_mocks(mock_stt_cls, mock_audio_cls)
         app_state = AppState()
         sm = SessionManager(app_state)
@@ -54,7 +54,7 @@ class TestStartSession:
     async def test_starts_stt_then_audio(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
     ) -> None:
-        """azure-stt-only-spec.md: Azure STT Streaming 接続 → マイクキャプチャ開始"""
+        """STT 接続 → マイクキャプチャ開始"""
         mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
         app_state = AppState()
         sm = SessionManager(app_state)
@@ -100,12 +100,12 @@ class TestStartSession:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.create_stt_engine")
+@patch("src.session_manager.MaiTranscribeClient")
 class TestStopSession:
     async def test_stops_audio_and_stt(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
     ) -> None:
-        """azure-stt-only-spec.md: 録音停止 → Azure STT切断"""
+        """録音停止 → STT切断"""
         mock_stt, mock_audio = _setup_mocks(mock_stt_cls, mock_audio_cls)
         app_state = AppState()
         sm = SessionManager(app_state)
@@ -219,12 +219,12 @@ class TestStopSession:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.create_stt_engine")
+@patch("src.session_manager.MaiTranscribeClient")
 class TestSttEventProcessing:
     async def test_interim_broadcasts_sse(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
     ) -> None:
-        """azure-stt-only-spec.md: interim → SSE("interim") → ブラウザ (グレー)"""
+        """interim → SSE("interim") → ブラウザ (グレー)"""
         _setup_mocks(mock_stt_cls, mock_audio_cls)
         app_state = AppState()
         sm = SessionManager(app_state)
@@ -245,7 +245,7 @@ class TestSttEventProcessing:
     async def test_recognized_creates_segment_and_broadcasts(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
     ) -> None:
-        """azure-stt-only-spec.md: recognized → SSE → ブラウザ (緑)"""
+        """recognized → SSE → ブラウザ (緑)"""
         _setup_mocks(mock_stt_cls, mock_audio_cls)
         app_state = AppState()
         sm = SessionManager(app_state)
@@ -295,7 +295,7 @@ class TestSttEventProcessing:
     async def test_full_text_assembled_from_segments(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
     ) -> None:
-        """azure-stt-only-spec.md: 全セグメントのテキスト結合"""
+        """全セグメントのテキスト結合"""
         _setup_mocks(mock_stt_cls, mock_audio_cls)
         app_state = AppState()
         sm = SessionManager(app_state)
@@ -315,13 +315,13 @@ class TestSttEventProcessing:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.create_stt_engine")
+@patch("src.session_manager.MaiTranscribeClient")
 class TestSessionTimeout:
     @patch("src.session_manager.MAX_SESSION_DURATION_SEC", 0.1)
     async def test_auto_stops_after_max_duration(
         self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
     ) -> None:
-        """azure-stt-only-spec.md: 最大セッション時間: 3分 → 超過時は自動で録音停止"""
+        """最大セッション時間: 3分 → 超過時は自動で録音停止"""
         mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
         app_state = AppState()
         sm = SessionManager(app_state)
@@ -337,14 +337,14 @@ class TestSessionTimeout:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.create_stt_engine")
+@patch("src.session_manager.MaiTranscribeClient")
 class TestSessionStartFailure:
     async def test_stt_failure_aborts_session(
         self,
         mock_stt_cls: MagicMock,
         mock_audio_cls: MagicMock,
     ) -> None:
-        """Azure STT開始失敗時はセッションを中止する"""
+        """STT開始失敗時はセッションを中止する"""
         mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
         mock_stt.start = AsyncMock(side_effect=RuntimeError("Auth failed"))
         app_state = AppState()
@@ -393,7 +393,7 @@ class TestSessionStartFailure:
 
 
 @patch("src.session_manager.AudioCapture")
-@patch("src.session_manager.create_stt_engine")
+@patch("src.session_manager.MaiTranscribeClient")
 class TestPostProcessingNotifications:
     """capabilities.post_processing 駆動の processing イベント通知。"""
 

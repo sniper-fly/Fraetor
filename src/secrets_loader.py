@@ -12,13 +12,11 @@ if TYPE_CHECKING:
     from mypy_boto3_ssm import SSMClient
 
 
-_ENV_AZURE_SPEECH_KEY = "FRAETOR_SSM_AZURE_SPEECH_KEY"
 _ENV_MAI_API_KEY = "FRAETOR_SSM_MAI_API_KEY"
 _ENV_MAI_ENDPOINT = "FRAETOR_SSM_MAI_ENDPOINT"
 _ENV_VERTEX_SA = "FRAETOR_SSM_VERTEX_SA"
 
 _ENV_VARS = (
-    _ENV_AZURE_SPEECH_KEY,
     _ENV_MAI_API_KEY,
     _ENV_MAI_ENDPOINT,
     _ENV_VERTEX_SA,
@@ -33,20 +31,18 @@ _SSO_LOGIN_HINT = (
 class Secrets(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    azure_speech_key: str
     mai_api_key: str
     mai_endpoint: str
     vertex_sa_info: dict[str, Any]
     vertex_project: str
 
 
-def _resolve_param_names() -> tuple[str, str, str, str]:
+def _resolve_param_names() -> tuple[str, str, str]:
     missing = [name for name in _ENV_VARS if not os.environ.get(name)]
     if missing:
         msg = f"環境変数が未設定です: {missing}"
         raise RuntimeError(msg)
     return (
-        os.environ[_ENV_AZURE_SPEECH_KEY],
         os.environ[_ENV_MAI_API_KEY],
         os.environ[_ENV_MAI_ENDPOINT],
         os.environ[_ENV_VERTEX_SA],
@@ -60,8 +56,8 @@ def load_secrets(client: SSMClient | None = None) -> Secrets:
     AWS_PROFILE / AWS_REGION 環境変数に従う。SSO セッション切れ時は
     `aws sso login` を案内する RuntimeError を送出する。
     """
-    azure_path, mai_key_path, mai_endpoint_path, vertex_sa_path = _resolve_param_names()
-    param_names = [azure_path, mai_key_path, mai_endpoint_path, vertex_sa_path]
+    mai_key_path, mai_endpoint_path, vertex_sa_path = _resolve_param_names()
+    param_names = [mai_key_path, mai_endpoint_path, vertex_sa_path]
 
     ssm = client if client is not None else boto3.client("ssm")
     try:
@@ -87,7 +83,6 @@ def load_secrets(client: SSMClient | None = None) -> Secrets:
         raise RuntimeError(msg) from exc
 
     return Secrets(
-        azure_speech_key=values[azure_path],
         mai_api_key=values[mai_key_path],
         mai_endpoint=values[mai_endpoint_path],
         vertex_sa_info=vertex_sa_info,
