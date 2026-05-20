@@ -41,9 +41,7 @@ class TestValidateApiKeys:
 
         assert validate_api_keys() == []
 
-    def test_warns_when_mai_key_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_warns_when_mai_key_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("src.config.MAI_API_KEY", "")
         monkeypatch.setattr("src.config.VERTEX_SA_INFO", {"project_id": "test-project"})
 

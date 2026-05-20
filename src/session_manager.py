@@ -28,6 +28,7 @@ class SessionManager:
 
     def __init__(self, app_state: AppState) -> None:
         self._app_state = app_state
+        self._lock = asyncio.Lock()
         self._stt_client: SttEngine | None = None
         self._audio_capture: AudioCapture | None = None
         self._event_task: asyncio.Task[None] | None = None
@@ -36,39 +37,40 @@ class SessionManager:
 
     async def start_session(self) -> None:
         """セッションを開始し、録音を開始する。"""
-        if self._app_state.recording:
-            return
+        async with self._lock:
+            if self._app_state.recording:
+                return
 
-        session = Session(
-            id=str(uuid4()),
-            segments=[],
-            started_at=datetime.now(tz=UTC),
-        )
-        self._app_state.current_session = session
-        self._app_state.recording = True
-        self._next_segment_id = 0
+            session = Session(
+                id=str(uuid4()),
+                segments=[],
+                started_at=datetime.now(tz=UTC),
+            )
+            self._app_state.current_session = session
+            self._app_state.recording = True
+            self._next_segment_id = 0
 
-        try:
-            self._stt_client = MaiTranscribeClient(self._app_state.stt_event_queue)
-            await self._stt_client.start()
-        except Exception:
-            logger.exception("STT start failed")
-            await self._abort_session_start()
-            return
+            try:
+                self._stt_client = MaiTranscribeClient(self._app_state.stt_event_queue)
+                await self._stt_client.start()
+            except Exception:
+                logger.exception("STT start failed")
+                await self._abort_session_start()
+                return
 
-        try:
-            self._audio_capture = AudioCapture(self._stt_client.feed_audio)
-            self._audio_capture.start()
-        except Exception:
-            logger.exception("Audio capture start failed")
-            await self._abort_session_start()
-            return
+            try:
+                self._audio_capture = AudioCapture(self._stt_client.feed_audio)
+                self._audio_capture.start()
+            except Exception:
+                logger.exception("Audio capture start failed")
+                await self._abort_session_start()
+                return
 
-        self._event_task = asyncio.create_task(self._process_stt_events())
-        self._timeout_task = asyncio.create_task(self._session_timeout())
+            self._event_task = asyncio.create_task(self._process_stt_events())
+            self._timeout_task = asyncio.create_task(self._session_timeout())
 
-        await self._app_state.broadcaster.broadcast("status", {"recording": True})
-        logger.info("Session started: %s", session.id)
+            await self._app_state.broadcaster.broadcast("status", {"recording": True})
+            logger.info("Session started: %s", session.id)
 
     async def _abort_session_start(self) -> None:
         """セッション開始に失敗した場合のクリーンアップ。"""
@@ -89,66 +91,67 @@ class SessionManager:
 
     async def stop_session(self, *, timed_out: bool = False) -> Session | None:
         """セッションを停止し、最終テキストを組み立てて返す。"""
-        if not self._app_state.recording:
-            return None
+        async with self._lock:
+            if not self._app_state.recording:
+                return None
 
-        self._app_state.recording = False
+            self._app_state.recording = False
 
-        if self._audio_capture:
-            self._audio_capture.stop()
-            self._audio_capture = None
+            if self._audio_capture:
+                self._audio_capture.stop()
+                self._audio_capture = None
 
-        post_processing = bool(
-            self._stt_client and self._stt_client.capabilities.post_processing
-        )
-        if post_processing:
-            await self._app_state.broadcaster.broadcast(
-                "processing", {"message": "文字起こし中..."}
+            post_processing = bool(
+                self._stt_client and self._stt_client.capabilities.post_processing
             )
+            if post_processing:
+                await self._app_state.broadcaster.broadcast(
+                    "processing", {"message": "文字起こし中..."}
+                )
 
-        if self._stt_client:
-            await self._stt_client.stop()
-            self._stt_client = None
+            if self._stt_client:
+                await self._stt_client.stop()
+                self._stt_client = None
 
-        if post_processing:
-            await self._app_state.broadcaster.broadcast("processing_done", {})
+            if post_processing:
+                await self._app_state.broadcaster.broadcast("processing_done", {})
 
-        if self._event_task:
-            self._event_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._event_task
-            self._event_task = None
+            if self._event_task:
+                self._event_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._event_task
+                self._event_task = None
 
-        if self._timeout_task and self._timeout_task is not asyncio.current_task():
-            self._timeout_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._timeout_task
-        self._timeout_task = None
+            if self._timeout_task and self._timeout_task is not asyncio.current_task():
+                self._timeout_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._timeout_task
+            self._timeout_task = None
 
-        # 残りの recognized イベントを処理
-        await self._drain_stt_queue()
+            # 残りの recognized イベントを処理
+            await self._drain_stt_queue()
 
-        session = self._app_state.current_session
-        session_end_data: dict[str, object] = {}
-        if session:
-            session.ended_at = datetime.now(tz=UTC)
-            session.timed_out = timed_out
-            self._app_state.pending_session = session
+            session = self._app_state.current_session
+            session_end_data: dict[str, object] = {}
+            if session:
+                session.ended_at = datetime.now(tz=UTC)
+                session.timed_out = timed_out
+                self._app_state.pending_session = session
 
-        self._app_state.current_session = None
+            self._app_state.current_session = None
 
-        await self._app_state.broadcaster.broadcast("session_end", session_end_data)
-        await self._app_state.broadcaster.broadcast("status", {"recording": False})
+            await self._app_state.broadcaster.broadcast("session_end", session_end_data)
+            await self._app_state.broadcaster.broadcast("status", {"recording": False})
 
-        if session:
-            logger.info(
-                "Session ended: %s (timed_out=%s, segments=%d)",
-                session.id,
-                timed_out,
-                len(session.segments),
-            )
+            if session:
+                logger.info(
+                    "Session ended: %s (timed_out=%s, segments=%d)",
+                    session.id,
+                    timed_out,
+                    len(session.segments),
+                )
 
-        return session
+            return session
 
     async def _process_stt_events(self) -> None:
         """STTイベントキューを監視し、セグメント作成+SSEブロードキャストを行う。"""

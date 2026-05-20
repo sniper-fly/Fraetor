@@ -438,3 +438,124 @@ class TestPostProcessingNotifications:
         events = [m["event"] for m in messages]
         assert "processing" not in events
         assert "processing_done" not in events
+
+
+@patch("src.session_manager.AudioCapture")
+@patch("src.session_manager.MaiTranscribeClient")
+class TestConcurrentStartStop:
+    """stop_session中にstart_sessionが呼ばれた場合の排他制御テスト。"""
+
+    async def test_start_waits_for_stop_to_complete(
+        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+    ) -> None:
+        """stop_session中のSTT API呼び出し中にstart_sessionが呼ばれた場合、
+        Lockにより待機し、stop完了後に新セッションが正常に開始される。"""
+        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        assert app_state.current_session is not None
+        first_session_id = app_state.current_session.id
+
+        stt_stop_entered = asyncio.Event()
+        stt_stop_proceed = asyncio.Event()
+
+        async def slow_stt_stop() -> None:
+            stt_stop_entered.set()
+            await stt_stop_proceed.wait()
+
+        mock_stt.stop = slow_stt_stop
+
+        stop_task = asyncio.create_task(sm.stop_session())
+        await stt_stop_entered.wait()
+
+        # stop中にstartを試みる(Lockで待機するはず)
+        start_task = asyncio.create_task(sm.start_session())
+        await asyncio.sleep(0.05)
+        # startはまだ完了していない
+        assert not start_task.done()
+        assert app_state.recording is False
+
+        # stopを完了させる
+        stt_stop_proceed.set()
+        stopped_session = await stop_task
+        assert stopped_session is not None
+        assert stopped_session.id == first_session_id
+
+        # start_sessionがLock解放後に実行される
+        await start_task
+        assert app_state.recording is True
+        assert app_state.current_session is not None
+        assert app_state.current_session.id != first_session_id
+
+        await sm.stop_session()
+
+    async def test_new_session_resources_not_clobbered(
+        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+    ) -> None:
+        """排他制御により新セッションのリソースが旧stop処理に破壊されない。"""
+        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        stt_stop_entered = asyncio.Event()
+        stt_stop_proceed = asyncio.Event()
+
+        async def slow_stt_stop() -> None:
+            stt_stop_entered.set()
+            await stt_stop_proceed.wait()
+
+        mock_stt.stop = slow_stt_stop
+
+        stop_task = asyncio.create_task(sm.stop_session())
+        await stt_stop_entered.wait()
+
+        start_task = asyncio.create_task(sm.start_session())
+        await asyncio.sleep(0.05)
+
+        stt_stop_proceed.set()
+        await stop_task
+        await start_task
+
+        # 新セッションのevent_taskとtimeout_taskが存在する
+        assert sm._event_task is not None
+        assert not sm._event_task.done()
+        assert sm._timeout_task is not None
+        assert not sm._timeout_task.done()
+        assert sm._stt_client is not None
+
+        await sm.stop_session()
+
+    async def test_concurrent_double_stop_is_idempotent(
+        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+    ) -> None:
+        """同時に2回stop_sessionが呼ばれても、2回目はNoneを返す。"""
+        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        app_state = AppState()
+        sm = SessionManager(app_state)
+        await sm.start_session()
+
+        stt_stop_entered = asyncio.Event()
+        stt_stop_proceed = asyncio.Event()
+
+        async def slow_stt_stop() -> None:
+            stt_stop_entered.set()
+            await stt_stop_proceed.wait()
+
+        mock_stt.stop = slow_stt_stop
+
+        stop_task1 = asyncio.create_task(sm.stop_session())
+        await stt_stop_entered.wait()
+
+        stop_task2 = asyncio.create_task(sm.stop_session())
+        await asyncio.sleep(0.05)
+        assert not stop_task2.done()
+
+        stt_stop_proceed.set()
+        result1 = await stop_task1
+        result2 = await stop_task2
+
+        assert result1 is not None
+        assert result2 is None
