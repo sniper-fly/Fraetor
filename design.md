@@ -2,7 +2,7 @@
 
 ## 概要
 
-Linux 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、MAI Transcribe でバッチ認識、認識結果をブラウザにリアルタイム表示する。録音停止後、LLM による自動校正を経てテキストを編集、クリップボードにコピーする。
+Linux / macOS 上で動作する音声入力アプリ。HTTP API で録音を開始/停止し、MAI Transcribe でバッチ認識、認識結果をブラウザにリアルタイム表示する。録音停止後、LLM による自動校正を経てテキストを編集、クリップボードにコピーする。
 
 ## アーキテクチャ
 
@@ -115,11 +115,25 @@ xclip でクリップボードにコピー
 | 履歴保存 | セッション終了時に JSONL に追記 |
 | 履歴削除 | `DELETE /api/history/{session_id}` で個別削除 |
 
+## 音声キャプチャ (常駐ストリーム方式)
+
+- sounddevice の `InputStream` は初回録音時に一度だけ開き、プロセス終了まで閉じない
+  (終了時は OS がデバイスを回収する)
+- 録音の ON/OFF はコールバックの書き込み先 (シンク) の差し替えのみで行う
+- 理由: macOS の PortAudio (CoreAudio バックエンド, v19.7.0 時点) には、
+  `stream.stop()/close()` が CoreAudio IO スレッドのリスナー発火と重なると
+  ABBA デッドロックしてプロセス全体が固まる既知のバグがあるため、
+  stop/close をそもそも呼ばない設計とする
+- トレードオフ: 初回録音以降、マイクは常時オープン (macOS ではマイク使用中
+  インジケータが点灯し続ける)
+- ストリームを開く操作も CoreAudio へ降りる同期呼び出しのため、
+  `asyncio.to_thread` でイベントループから隔離する
+
 ## データフロー
 
 ```
 [録音中]
-  マイク -> sounddevice(PCM) -> MAI Transcribe (バッファリング)
+  マイク -> sounddevice(PCM, 常駐ストリーム) -> MAI Transcribe (バッファリング)
 
 [再トグル or 3分経過]
   録音停止 -> MAI Transcribe バッチ認識

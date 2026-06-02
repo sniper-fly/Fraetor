@@ -7,12 +7,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from src.audio import AudioCapture
 from src.config import MAX_SESSION_DURATION_SEC
 from src.models import Segment, Session
 from src.stt_mai import MaiTranscribeClient
 
 if TYPE_CHECKING:
+    from src.audio import AudioCapture
     from src.state import AppState
     from src.stt_base import SttEngine
 
@@ -26,11 +26,11 @@ class SessionManager:
     STTイベントをセグメントに変換してSSEでブラウザに配信する。
     """
 
-    def __init__(self, app_state: AppState) -> None:
+    def __init__(self, app_state: AppState, audio_capture: AudioCapture) -> None:
         self._app_state = app_state
+        self._audio_capture = audio_capture
         self._lock = asyncio.Lock()
         self._stt_client: SttEngine | None = None
-        self._audio_capture: AudioCapture | None = None
         self._event_task: asyncio.Task[None] | None = None
         self._timeout_task: asyncio.Task[None] | None = None
         self._next_segment_id: int = 0
@@ -59,8 +59,8 @@ class SessionManager:
                 return
 
             try:
-                self._audio_capture = AudioCapture(self._stt_client.feed_audio)
-                self._audio_capture.start()
+                await self._audio_capture.ensure_open()
+                self._audio_capture.start_recording(self._stt_client.feed_audio)
             except Exception:
                 logger.exception("Audio capture start failed")
                 await self._abort_session_start()
@@ -74,9 +74,7 @@ class SessionManager:
 
     async def _abort_session_start(self) -> None:
         """セッション開始に失敗した場合のクリーンアップ。"""
-        if self._audio_capture:
-            self._audio_capture.stop()
-            self._audio_capture = None
+        self._audio_capture.stop_recording()
         if self._stt_client:
             try:
                 await self._stt_client.stop()
@@ -97,9 +95,7 @@ class SessionManager:
 
             self._app_state.recording = False
 
-            if self._audio_capture:
-                self._audio_capture.stop()
-                self._audio_capture = None
+            self._audio_capture.stop_recording()
 
             post_processing = bool(
                 self._stt_client and self._stt_client.capabilities.post_processing

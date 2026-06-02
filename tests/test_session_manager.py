@@ -12,11 +12,10 @@ from src.stt_base import SttCapabilities
 
 def _setup_mocks(
     mock_factory: MagicMock,
-    mock_audio_cls: MagicMock,
     *,
     post_processing: bool = False,
 ) -> tuple[MagicMock, MagicMock]:
-    """MaiTranscribeClient と AudioCapture のモックを設定する。"""
+    """MaiTranscribeClient のモックと AudioCapture モック (注入用) を設定する。"""
     mock_stt = mock_factory.return_value
     mock_stt.start = AsyncMock()
     mock_stt.stop = AsyncMock()
@@ -25,20 +24,20 @@ def _setup_mocks(
         streaming=not post_processing,
         post_processing=post_processing,
     )
-    mock_audio = mock_audio_cls.return_value
+    mock_audio = MagicMock()
+    mock_audio.ensure_open = AsyncMock()
     return mock_stt, mock_audio
 
 
-@patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.MaiTranscribeClient")
 class TestStartSession:
     async def test_creates_session_with_correct_fields(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """セッション開始 → Session 作成"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         await sm.start_session()
 
@@ -51,29 +50,25 @@ class TestStartSession:
 
         await sm.stop_session()
 
-    async def test_starts_stt_then_audio(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
-        """STT 接続 → マイクキャプチャ開始"""
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
+    async def test_starts_stt_then_audio(self, mock_stt_cls: MagicMock) -> None:
+        """STT 接続 → 常駐ストリームを開いて録音開始"""
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         await sm.start_session()
 
         mock_stt.start.assert_called_once()
-        mock_audio_cls.return_value.start.assert_called_once()
-        mock_audio_cls.assert_called_once_with(mock_stt.feed_audio)
+        mock_audio.ensure_open.assert_awaited_once()
+        mock_audio.start_recording.assert_called_once_with(mock_stt.feed_audio)
 
         await sm.stop_session()
 
-    async def test_broadcasts_recording_started(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+    async def test_broadcasts_recording_started(self, mock_stt_cls: MagicMock) -> None:
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
         sub = app_state.broadcaster.subscribe()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         await sm.start_session()
 
@@ -84,11 +79,11 @@ class TestStartSession:
         await sm.stop_session()
 
     async def test_ignores_start_when_already_recording(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
         mock_stt.start.reset_mock()
 
@@ -99,30 +94,25 @@ class TestStartSession:
         await sm.stop_session()
 
 
-@patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.MaiTranscribeClient")
 class TestStopSession:
-    async def test_stops_audio_and_stt(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
-        """録音停止 → STT切断"""
-        mock_stt, mock_audio = _setup_mocks(mock_stt_cls, mock_audio_cls)
+    async def test_stops_recording_and_stt(self, mock_stt_cls: MagicMock) -> None:
+        """録音停止 → STT切断。ストリーム自体は閉じない (常駐)"""
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         await sm.stop_session()
 
-        mock_audio.stop.assert_called_once()
+        mock_audio.stop_recording.assert_called_once()
         mock_stt.stop.assert_called_once()
         assert app_state.recording is False
 
-    async def test_returns_finalized_session(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+    async def test_returns_finalized_session(self, mock_stt_cls: MagicMock) -> None:
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         session = await sm.stop_session()
@@ -133,22 +123,22 @@ class TestStopSession:
         assert app_state.current_session is None
 
     async def test_returns_none_when_not_recording(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         result = await sm.stop_session()
 
         assert result is None
 
     async def test_broadcasts_session_end_and_status(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
         sub = app_state.broadcaster.subscribe()
 
@@ -163,12 +153,10 @@ class TestStopSession:
         status_msg = next(m for m in messages if m["event"] == "status")
         assert json.loads(status_msg["data"])["recording"] is False
 
-    async def test_timed_out_flag_set(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+    async def test_timed_out_flag_set(self, mock_stt_cls: MagicMock) -> None:
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         session = await sm.stop_session(timed_out=True)
@@ -177,12 +165,12 @@ class TestStopSession:
         assert session.timed_out is True
 
     async def test_drains_recognized_events_after_event_task_cancelled(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """停止時にキューに残ったrecognizedイベントもセグメントに反映される。"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         assert sm._event_task is not None
@@ -200,13 +188,11 @@ class TestStopSession:
         assert len(session.segments) == 1
         assert session.segments[0].text == "ドレイン"
 
-    async def test_sets_pending_session_on_stop(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
+    async def test_sets_pending_session_on_stop(self, mock_stt_cls: MagicMock) -> None:
         """停止時に pending_session にセッションが保存されること"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "テスト"})
@@ -218,16 +204,13 @@ class TestStopSession:
         assert app_state.current_session is None
 
 
-@patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.MaiTranscribeClient")
 class TestSttEventProcessing:
-    async def test_interim_broadcasts_sse(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
+    async def test_interim_broadcasts_sse(self, mock_stt_cls: MagicMock) -> None:
         """interim → SSE("interim") → ブラウザ (グレー)"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
         sub = app_state.broadcaster.subscribe()
         while not sub.empty():
@@ -243,12 +226,12 @@ class TestSttEventProcessing:
         await sm.stop_session()
 
     async def test_recognized_creates_segment_and_broadcasts(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """recognized → SSE → ブラウザ (緑)"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
         sub = app_state.broadcaster.subscribe()
         while not sub.empty():
@@ -272,12 +255,10 @@ class TestSttEventProcessing:
 
         await sm.stop_session()
 
-    async def test_segment_ids_increment(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
-    ) -> None:
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+    async def test_segment_ids_increment(self, mock_stt_cls: MagicMock) -> None:
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         app_state.stt_event_queue.put_nowait({"type": "recognized", "text": "1つ目"})
@@ -293,12 +274,12 @@ class TestSttEventProcessing:
         await sm.stop_session()
 
     async def test_full_text_assembled_from_segments(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """全セグメントのテキスト結合"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
+        _, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         app_state.stt_event_queue.put_nowait(
@@ -314,17 +295,16 @@ class TestSttEventProcessing:
         assert session.full_text == "こんにちは。お元気ですか。"
 
 
-@patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.MaiTranscribeClient")
 class TestSessionTimeout:
     @patch("src.session_manager.MAX_SESSION_DURATION_SEC", 0.1)
     async def test_auto_stops_after_max_duration(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """最大セッション時間: 3分 → 超過時は自動で録音停止"""
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         await sm.start_session()
         assert app_state.recording is True
@@ -336,35 +316,26 @@ class TestSessionTimeout:
         mock_stt.stop.assert_called_once()
 
 
-@patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.MaiTranscribeClient")
 class TestSessionStartFailure:
-    async def test_stt_failure_aborts_session(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-    ) -> None:
+    async def test_stt_failure_aborts_session(self, mock_stt_cls: MagicMock) -> None:
         """STT開始失敗時はセッションを中止する"""
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
         mock_stt.start = AsyncMock(side_effect=RuntimeError("Auth failed"))
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         await sm.start_session()
 
         assert app_state.recording is False
         assert app_state.current_session is None
 
-    async def test_stt_failure_broadcasts_error(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
-    ) -> None:
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls)
+    async def test_stt_failure_broadcasts_error(self, mock_stt_cls: MagicMock) -> None:
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
         mock_stt.start = AsyncMock(side_effect=RuntimeError("Auth failed"))
         app_state = AppState()
         sub = app_state.broadcaster.subscribe()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         await sm.start_session()
 
@@ -375,36 +346,52 @@ class TestSessionStartFailure:
         assert len(error_msgs) == 1
         assert "失敗" in json.loads(error_msgs[0]["data"])["message"]
 
-    async def test_audio_failure_aborts_session(
-        self,
-        mock_stt_cls: MagicMock,
-        mock_audio_cls: MagicMock,
+    async def test_stream_open_failure_aborts_session(
+        self, mock_stt_cls: MagicMock
     ) -> None:
-        """AudioCapture開始失敗時はセッションを中止する"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls)
-        mock_audio_cls.return_value.start.side_effect = RuntimeError("No audio device")
+        """常駐ストリームを開けない場合はセッションを中止する"""
+        _, mock_audio = _setup_mocks(mock_stt_cls)
+        mock_audio.ensure_open = AsyncMock(side_effect=RuntimeError("No audio device"))
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
 
         await sm.start_session()
 
         assert app_state.recording is False
         assert app_state.current_session is None
 
+    async def test_stream_open_failure_can_recover_on_next_start(
+        self, mock_stt_cls: MagicMock
+    ) -> None:
+        """ストリームを開けず中止しても、次の start_session で再試行できる"""
+        _, mock_audio = _setup_mocks(mock_stt_cls)
+        mock_audio.ensure_open = AsyncMock(
+            side_effect=[RuntimeError("No audio device"), None]
+        )
+        app_state = AppState()
+        sm = SessionManager(app_state, mock_audio)
 
-@patch("src.session_manager.AudioCapture")
+        await sm.start_session()
+        assert app_state.recording is False
+
+        await sm.start_session()
+        assert app_state.recording is True
+
+        await sm.stop_session()
+
+
 @patch("src.session_manager.MaiTranscribeClient")
 class TestPostProcessingNotifications:
     """capabilities.post_processing 駆動の processing イベント通知。"""
 
     async def test_post_processing_engine_emits_processing_events(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """MAI など post_processing=True のエンジンでは
         stop時に processing/processing_done が発火される。"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        _, mock_audio = _setup_mocks(mock_stt_cls, post_processing=True)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
         sub = app_state.broadcaster.subscribe()
 
@@ -420,13 +407,12 @@ class TestPostProcessingNotifications:
         assert events.index("processing") < events.index("processing_done")
 
     async def test_streaming_engine_does_not_emit_processing_events(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
-        """Azure など post_processing=False のエンジンでは
-        processing 系イベントは発火されない。"""
-        _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=False)
+        """post_processing=False のエンジンでは processing 系イベントは発火されない。"""
+        _, mock_audio = _setup_mocks(mock_stt_cls, post_processing=False)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
         sub = app_state.broadcaster.subscribe()
 
@@ -440,19 +426,18 @@ class TestPostProcessingNotifications:
         assert "processing_done" not in events
 
 
-@patch("src.session_manager.AudioCapture")
 @patch("src.session_manager.MaiTranscribeClient")
 class TestConcurrentStartStop:
     """stop_session中にstart_sessionが呼ばれた場合の排他制御テスト。"""
 
     async def test_start_waits_for_stop_to_complete(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """stop_session中のSTT API呼び出し中にstart_sessionが呼ばれた場合、
         Lockにより待機し、stop完了後に新セッションが正常に開始される。"""
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls, post_processing=True)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         assert app_state.current_session is not None
@@ -492,12 +477,12 @@ class TestConcurrentStartStop:
         await sm.stop_session()
 
     async def test_new_session_resources_not_clobbered(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """排他制御により新セッションのリソースが旧stop処理に破壊されない。"""
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls, post_processing=True)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         stt_stop_entered = asyncio.Event()
@@ -529,12 +514,12 @@ class TestConcurrentStartStop:
         await sm.stop_session()
 
     async def test_concurrent_double_stop_is_idempotent(
-        self, mock_stt_cls: MagicMock, mock_audio_cls: MagicMock
+        self, mock_stt_cls: MagicMock
     ) -> None:
         """同時に2回stop_sessionが呼ばれても、2回目はNoneを返す。"""
-        mock_stt, _ = _setup_mocks(mock_stt_cls, mock_audio_cls, post_processing=True)
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls, post_processing=True)
         app_state = AppState()
-        sm = SessionManager(app_state)
+        sm = SessionManager(app_state, mock_audio)
         await sm.start_session()
 
         stt_stop_entered = asyncio.Event()
