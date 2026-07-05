@@ -115,19 +115,27 @@ xclip でクリップボードにコピー
 | 履歴保存 | セッション終了時に JSONL に追記 |
 | 履歴削除 | `DELETE /api/history/{session_id}` で個別削除 |
 
-## 音声キャプチャ (常駐ストリーム方式)
+## 音声キャプチャ (プラットフォーム別ライフサイクル戦略)
 
-- sounddevice の `InputStream` は初回録音時に一度だけ開き、プロセス終了まで閉じない
-  (終了時は OS がデバイスを回収する)
-- 録音の ON/OFF はコールバックの書き込み先 (シンク) の差し替えのみで行う
-- 理由: macOS の PortAudio (CoreAudio バックエンド, v19.7.0 時点) には、
-  `stream.stop()/close()` が CoreAudio IO スレッドのリスナー発火と重なると
+抽象基底 `AudioCapture` (`audio_base.py`) が PCM 取得 (16kHz/16-bit/mono、
+コールバック→シンク書き込み) を共通化し、ストリームのライフサイクル戦略だけを
+実装ごとに分ける。`create_audio_capture()` (`audio.py`) がプラットフォームを
+判定して実装を選択し、コンポジションルート (`app.py`) が `SessionManager` に
+DI で注入する。プラットフォーム分岐はファクトリの1箇所のみ。
+
+| 実装 | 対象 | 戦略 |
+|------|------|------|
+| `PersistentStreamCapture` | macOS | ストリームを初回録音時に一度だけ開き、プロセス終了まで閉じない。録音 ON/OFF はシンク差し替えのみ |
+| `PerSessionStreamCapture` | Linux (その他) | セッションごとにストリームを開閉し、録音中のみマイクを掴む |
+
+- macOS で常駐方式を採る理由: PortAudio (CoreAudio バックエンド, v19.7.0 時点)
+  には `stream.stop()/close()` が CoreAudio IO スレッドのリスナー発火と重なると
   ABBA デッドロックしてプロセス全体が固まる既知のバグがあるため、
-  stop/close をそもそも呼ばない設計とする
-- トレードオフ: 初回録音以降、マイクは常時オープン (macOS ではマイク使用中
-  インジケータが点灯し続ける)
-- ストリームを開く操作も CoreAudio へ降りる同期呼び出しのため、
-  `asyncio.to_thread` でイベントループから隔離する
+  stop/close をそもそも呼ばない
+- macOS のトレードオフ: 初回録音以降、マイクは常時オープン
+  (マイク使用中インジケータが点灯し続ける)
+- ストリームの open/stop/close はブロックし得る同期呼び出しのため、
+  どの実装も `asyncio.to_thread` でイベントループから隔離する
 
 ## データフロー
 

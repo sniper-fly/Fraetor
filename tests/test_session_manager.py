@@ -25,7 +25,8 @@ def _setup_mocks(
         post_processing=post_processing,
     )
     mock_audio = MagicMock()
-    mock_audio.ensure_open = AsyncMock()
+    mock_audio.start_recording = AsyncMock()
+    mock_audio.stop_recording = AsyncMock()
     return mock_stt, mock_audio
 
 
@@ -59,8 +60,7 @@ class TestStartSession:
         await sm.start_session()
 
         mock_stt.start.assert_called_once()
-        mock_audio.ensure_open.assert_awaited_once()
-        mock_audio.start_recording.assert_called_once_with(mock_stt.feed_audio)
+        mock_audio.start_recording.assert_awaited_once_with(mock_stt.feed_audio)
 
         await sm.stop_session()
 
@@ -105,7 +105,7 @@ class TestStopSession:
 
         await sm.stop_session()
 
-        mock_audio.stop_recording.assert_called_once()
+        mock_audio.stop_recording.assert_awaited_once()
         mock_stt.stop.assert_called_once()
         assert app_state.recording is False
 
@@ -349,9 +349,11 @@ class TestSessionStartFailure:
     async def test_stream_open_failure_aborts_session(
         self, mock_stt_cls: MagicMock
     ) -> None:
-        """常駐ストリームを開けない場合はセッションを中止する"""
+        """ストリームを開けない場合はセッションを中止する"""
         _, mock_audio = _setup_mocks(mock_stt_cls)
-        mock_audio.ensure_open = AsyncMock(side_effect=RuntimeError("No audio device"))
+        mock_audio.start_recording = AsyncMock(
+            side_effect=RuntimeError("No audio device")
+        )
         app_state = AppState()
         sm = SessionManager(app_state, mock_audio)
 
@@ -365,7 +367,7 @@ class TestSessionStartFailure:
     ) -> None:
         """ストリームを開けず中止しても、次の start_session で再試行できる"""
         _, mock_audio = _setup_mocks(mock_stt_cls)
-        mock_audio.ensure_open = AsyncMock(
+        mock_audio.start_recording = AsyncMock(
             side_effect=[RuntimeError("No audio device"), None]
         )
         app_state = AppState()

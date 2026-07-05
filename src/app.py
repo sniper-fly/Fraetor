@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 
-from src.audio import AudioCapture
+from src.audio import create_audio_capture
 from src.config import (
     GEMINI_MODEL,
     PROOFREAD_PROMPT,
@@ -38,9 +38,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app_state = AppState()
     app.state.app_state = app_state
     app.state.templates_dir = Path(__file__).parent / "templates"
-    # 常駐ストリーム方式: ストリームは初回録音時に開き、プロセス終了まで閉じない
-    # (macOS CoreAudio の stop/close デッドロックバグを踏まないため。design.md 参照)
-    app.state.session_manager = SessionManager(app_state, AudioCapture())
+    # AudioCapture はプラットフォームごとにライフサイクル戦略が異なる
+    # (macOS: 常駐ストリーム / Linux: セッション開閉。design.md 参照)
+    app.state.session_manager = SessionManager(app_state, create_audio_capture())
     if VERTEX_SA_INFO:
         app.state.proofreader = Proofreader(
             sa_info=VERTEX_SA_INFO,

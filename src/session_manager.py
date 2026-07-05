@@ -12,7 +12,7 @@ from src.models import Segment, Session
 from src.stt_mai import MaiTranscribeClient
 
 if TYPE_CHECKING:
-    from src.audio import AudioCapture
+    from src.audio_base import AudioCapture
     from src.state import AppState
     from src.stt_base import SttEngine
 
@@ -59,8 +59,7 @@ class SessionManager:
                 return
 
             try:
-                await self._audio_capture.ensure_open()
-                self._audio_capture.start_recording(self._stt_client.feed_audio)
+                await self._audio_capture.start_recording(self._stt_client.feed_audio)
             except Exception:
                 logger.exception("Audio capture start failed")
                 await self._abort_session_start()
@@ -74,7 +73,10 @@ class SessionManager:
 
     async def _abort_session_start(self) -> None:
         """セッション開始に失敗した場合のクリーンアップ。"""
-        self._audio_capture.stop_recording()
+        try:
+            await self._audio_capture.stop_recording()
+        except Exception:
+            logger.exception("Failed to stop audio capture during abort")
         if self._stt_client:
             try:
                 await self._stt_client.stop()
@@ -95,7 +97,7 @@ class SessionManager:
 
             self._app_state.recording = False
 
-            self._audio_capture.stop_recording()
+            await self._audio_capture.stop_recording()
 
             post_processing = bool(
                 self._stt_client and self._stt_client.capabilities.post_processing
