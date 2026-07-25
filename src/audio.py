@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
-from src.audio_base import AudioCapture
 from src.audio_per_session import PerSessionStreamCapture
 from src.audio_persistent import PersistentStreamCapture
+
+if TYPE_CHECKING:
+    from src.audio_base import AudioCapture
 
 
 def create_audio_capture() -> AudioCapture:

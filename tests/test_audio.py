@@ -143,9 +143,7 @@ class TestPerSessionStreamCapture:
             # stream.stop() 完了前にコールバックが発火するケースを模擬
             capture._audio_callback(audio_data, 1, None, MagicMock())
 
-        mock_sd.InputStream.return_value.stop.side_effect = (
-            stop_with_inflight_callback
-        )
+        mock_sd.InputStream.return_value.stop.side_effect = stop_with_inflight_callback
 
         await capture.stop_recording()
 
