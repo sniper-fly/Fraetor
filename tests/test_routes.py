@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import signal
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +9,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from src.app import app
+from src.config import SHUTDOWN_DELAY_SEC
 from src.models import Segment, Session
 from src.routes import events as events_handler
 from src.state import AppState
@@ -229,21 +228,15 @@ class TestDeleteHistory:
 
 
 class TestShutdown:
-    @patch("src.routes.asyncio.get_running_loop")
-    def test_shutdown_returns_ok(
-        self, mock_get_loop: MagicMock, client: TestClient
-    ) -> None:
-        mock_get_loop.return_value = MagicMock()
+    def test_shutdown_returns_ok(self, client: TestClient) -> None:
+        client.app.state.shutdowner = MagicMock()  # type: ignore[attr-defined]
 
         response = client.post("/api/shutdown")
 
         assert response.json() == {"ok": True}
 
-    @patch("src.routes.asyncio.get_running_loop")
-    def test_shutdown_stops_recording_if_active(
-        self, mock_get_loop: MagicMock, client: TestClient
-    ) -> None:
-        mock_get_loop.return_value = MagicMock()
+    def test_shutdown_stops_recording_if_active(self, client: TestClient) -> None:
+        client.app.state.shutdowner = MagicMock()  # type: ignore[attr-defined]
         mock_sm = AsyncMock()
         client.app.state.session_manager = mock_sm  # type: ignore[attr-defined]
         app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
@@ -254,11 +247,8 @@ class TestShutdown:
         assert response.status_code == 200
         mock_sm.stop_session.assert_called_once()
 
-    @patch("src.routes.asyncio.get_running_loop")
-    def test_shutdown_skips_stop_when_not_recording(
-        self, mock_get_loop: MagicMock, client: TestClient
-    ) -> None:
-        mock_get_loop.return_value = MagicMock()
+    def test_shutdown_skips_stop_when_not_recording(self, client: TestClient) -> None:
+        client.app.state.shutdowner = MagicMock()  # type: ignore[attr-defined]
         mock_sm = AsyncMock()
         client.app.state.session_manager = mock_sm  # type: ignore[attr-defined]
 
@@ -267,15 +257,10 @@ class TestShutdown:
         assert response.status_code == 200
         mock_sm.stop_session.assert_not_called()
 
-    @patch("src.routes.asyncio.get_running_loop")
-    def test_shutdown_schedules_sigterm(
-        self, mock_get_loop: MagicMock, client: TestClient
-    ) -> None:
-        mock_loop = MagicMock()
-        mock_get_loop.return_value = mock_loop
+    def test_shutdown_schedules_process_exit(self, client: TestClient) -> None:
+        mock_shutdowner = MagicMock()
+        client.app.state.shutdowner = mock_shutdowner  # type: ignore[attr-defined]
 
         client.post("/api/shutdown")
 
-        mock_loop.call_later.assert_called_once_with(
-            0.5, os.kill, os.getpid(), signal.SIGTERM
-        )
+        mock_shutdowner.schedule.assert_called_once_with(SHUTDOWN_DELAY_SEC)

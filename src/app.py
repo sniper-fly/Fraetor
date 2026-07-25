@@ -20,6 +20,7 @@ from src.logging_config import configure_logging
 from src.proofreader import Proofreader
 from src.routes import router
 from src.session_manager import SessionManager
+from src.shutdown import ProcessShutdowner
 from src.state import AppState
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # AudioCapture はプラットフォームごとにライフサイクル戦略が異なる
     # (macOS: 常駐ストリーム / Linux: セッション開閉。design.md 参照)
     app.state.session_manager = SessionManager(app_state, create_audio_capture())
+    app.state.shutdowner = ProcessShutdowner()
     if VERTEX_SA_INFO:
         app.state.proofreader = Proofreader(
             sa_info=VERTEX_SA_INFO,

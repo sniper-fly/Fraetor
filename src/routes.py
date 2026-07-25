@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import signal
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,7 +11,12 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from src.clipboard import copy_to_clipboard
-from src.config import HISTORY_FILE, PROOFREAD_TIMEOUT_SEC, SSE_KEEPALIVE_SEC
+from src.config import (
+    HISTORY_FILE,
+    PROOFREAD_TIMEOUT_SEC,
+    SHUTDOWN_DELAY_SEC,
+    SSE_KEEPALIVE_SEC,
+)
 from src.history import delete_session, save_session
 
 if TYPE_CHECKING:
@@ -21,6 +24,7 @@ if TYPE_CHECKING:
 
     from src.proofreader import Proofreader
     from src.session_manager import SessionManager
+    from src.shutdown import ProcessShutdowner
     from src.state import AppState
 
 logger = logging.getLogger(__name__)
@@ -35,6 +39,11 @@ def _get_state(request: Request) -> AppState:
 def _get_session_manager(request: Request) -> SessionManager:
     session_manager: SessionManager = request.app.state.session_manager
     return session_manager
+
+
+def _get_shutdowner(request: Request) -> ProcessShutdowner:
+    shutdowner: ProcessShutdowner = request.app.state.shutdowner
+    return shutdowner
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -151,6 +160,5 @@ async def shutdown(request: Request) -> dict[str, bool]:
     if app_state.recording:
         await session_manager.stop_session()
     await app_state.broadcaster.broadcast("shutdown", {})
-    loop = asyncio.get_running_loop()
-    loop.call_later(0.5, os.kill, os.getpid(), signal.SIGTERM)
+    _get_shutdowner(request).schedule(SHUTDOWN_DELAY_SEC)
     return {"ok": True}
