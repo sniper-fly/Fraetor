@@ -3,11 +3,30 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.session_manager import SessionManager
 from src.state import AppState
 from src.stt_base import SttCapabilities
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+
+@pytest.fixture(autouse=True)
+def mock_vad() -> Generator[MagicMock]:
+    """SpeechActivityDetector をモックし、実モデルロードを回避する。
+
+    デフォルトでは無音扱い (last_speech_time はセッション開始時刻から不変)。
+    無音タイムアウト系のテストではこの戻り値の last_speech_time を書き換える。
+    """
+    with patch("src.session_manager.SpeechActivityDetector") as mock_vad_cls:
+        mock_vad_cls.return_value.last_speech_time = time.monotonic()
+        yield mock_vad_cls
 
 
 def _setup_mocks(
@@ -60,7 +79,34 @@ class TestStartSession:
         await sm.start_session()
 
         mock_stt.start.assert_called_once()
-        mock_audio.start_recording.assert_awaited_once_with(mock_stt.feed_audio)
+        mock_audio.start_recording.assert_awaited_once_with(sm._on_audio_chunk)
+
+        await sm.stop_session()
+
+    async def test_audio_chunk_forwarded_to_stt(self, mock_stt_cls: MagicMock) -> None:
+        """録音コールバックのPCMチャンクがSTTのfeed_audioに転送される"""
+        mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state, mock_audio)
+        await sm.start_session()
+
+        sm._on_audio_chunk(b"pcm-bytes")
+
+        mock_stt.feed_audio.assert_called_once_with(b"pcm-bytes")
+
+        await sm.stop_session()
+
+    async def test_audio_chunk_forwarded_to_vad(self, mock_stt_cls: MagicMock) -> None:
+        """録音コールバックのPCMチャンクがVADにも転送される"""
+        _, mock_audio = _setup_mocks(mock_stt_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state, mock_audio)
+        await sm.start_session()
+
+        sm._on_audio_chunk(b"pcm-bytes")
+
+        assert sm._vad is not None
+        sm._vad.feed.assert_called_once_with(b"pcm-bytes")  # type: ignore[attr-defined]
 
         await sm.stop_session()
 
@@ -297,11 +343,11 @@ class TestSttEventProcessing:
 
 @patch("src.session_manager.MaiTranscribeClient")
 class TestSessionTimeout:
+    @pytest.mark.usefixtures("mock_vad")
+    @patch("src.session_manager.SILENCE_TIMEOUT_SEC", 10)
     @patch("src.session_manager.MAX_SESSION_DURATION_SEC", 0.1)
-    async def test_auto_stops_after_max_duration(
-        self, mock_stt_cls: MagicMock
-    ) -> None:
-        """最大セッション時間: 3分 → 超過時は自動で録音停止"""
+    async def test_auto_stops_after_max_duration(self, mock_stt_cls: MagicMock) -> None:
+        """最大セッション時間経過 → 超過時は自動で録音停止"""
         mock_stt, mock_audio = _setup_mocks(mock_stt_cls)
         app_state = AppState()
         sm = SessionManager(app_state, mock_audio)
@@ -314,6 +360,66 @@ class TestSessionTimeout:
         assert app_state.recording is False
         assert app_state.current_session is None
         mock_stt.stop.assert_called_once()
+
+    @pytest.mark.usefixtures("mock_vad")
+    @patch("src.session_manager.SILENCE_TIMEOUT_SEC", 0.1)
+    @patch("src.session_manager.MAX_SESSION_DURATION_SEC", 10)
+    async def test_auto_stops_after_silence_timeout(
+        self, mock_stt_cls: MagicMock
+    ) -> None:
+        """発話なしのまま SILENCE_TIMEOUT_SEC 経過 → 自動で録音停止"""
+        _, mock_audio = _setup_mocks(mock_stt_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state, mock_audio)
+
+        await sm.start_session()
+        assert app_state.recording is True
+
+        await asyncio.sleep(0.2)
+
+        assert app_state.recording is False
+        assert app_state.current_session is None
+
+    @patch("src.session_manager.SILENCE_TIMEOUT_SEC", 0.3)
+    @patch("src.session_manager.MAX_SESSION_DURATION_SEC", 10)
+    async def test_speech_detection_resets_silence_timer(
+        self, mock_stt_cls: MagicMock, mock_vad: MagicMock
+    ) -> None:
+        """VADが発話を検知し続ける間は無音タイムアウトが発動しない"""
+        _, mock_audio = _setup_mocks(mock_stt_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state, mock_audio)
+
+        await sm.start_session()
+        mock_detector = mock_vad.return_value
+
+        # 無音タイムアウト(0.3s)より短い間隔で発話検知時刻を更新し続ける
+        for _ in range(3):
+            await asyncio.sleep(0.1)
+            mock_detector.last_speech_time = time.monotonic()
+
+        assert app_state.recording is True
+
+        await sm.stop_session()
+
+    @patch("src.session_manager.SILENCE_TIMEOUT_SEC", 10)
+    @patch("src.session_manager.MAX_SESSION_DURATION_SEC", 0.1)
+    async def test_max_duration_stops_despite_speech(
+        self, mock_stt_cls: MagicMock, mock_vad: MagicMock
+    ) -> None:
+        """発話が継続していても最大セッション時間で停止する"""
+        _, mock_audio = _setup_mocks(mock_stt_cls)
+        app_state = AppState()
+        sm = SessionManager(app_state, mock_audio)
+
+        await sm.start_session()
+        mock_detector = mock_vad.return_value
+        mock_detector.last_speech_time = time.monotonic()
+
+        await asyncio.sleep(0.2)
+
+        assert app_state.recording is False
+        assert app_state.current_session is None
 
 
 @patch("src.session_manager.MaiTranscribeClient")

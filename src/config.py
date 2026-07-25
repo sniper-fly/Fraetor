@@ -4,7 +4,11 @@ from typing import Any
 from src.secrets_loader import load_secrets
 
 # --- セッション ---
-MAX_SESSION_DURATION_SEC: int = 180
+MAX_SESSION_DURATION_SEC: int = 600
+SILENCE_TIMEOUT_SEC: int = 120
+
+# --- VAD (Silero) ---
+VAD_THRESHOLD: float = 0.5
 
 # --- STT 共通 ---
 STT_SAMPLE_RATE: int = 16000
@@ -20,6 +24,7 @@ MAI_TIMEOUT_SEC: int = 60
 # --- サーバー ---
 SERVER_HOST: str = "127.0.0.1"
 SERVER_PORT: int = 8765
+SHUTDOWN_DELAY_SEC: float = 0.5
 
 # --- SSE ---
 SSE_KEEPALIVE_SEC: int = 15

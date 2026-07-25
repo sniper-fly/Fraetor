@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from src.config import MAX_SESSION_DURATION_SEC
+from src.config import MAX_SESSION_DURATION_SEC, SILENCE_TIMEOUT_SEC
 from src.models import Segment, Session
 from src.stt_mai import MaiTranscribeClient
+from src.vad import SpeechActivityDetector
 
 if TYPE_CHECKING:
     from src.audio_base import AudioCapture
@@ -31,6 +33,7 @@ class SessionManager:
         self._audio_capture = audio_capture
         self._lock = asyncio.Lock()
         self._stt_client: SttEngine | None = None
+        self._vad: SpeechActivityDetector | None = None
         self._event_task: asyncio.Task[None] | None = None
         self._timeout_task: asyncio.Task[None] | None = None
         self._next_segment_id: int = 0
@@ -58,8 +61,10 @@ class SessionManager:
                 await self._abort_session_start()
                 return
 
+            self._vad = SpeechActivityDetector()
+
             try:
-                await self._audio_capture.start_recording(self._stt_client.feed_audio)
+                await self._audio_capture.start_recording(self._on_audio_chunk)
             except Exception:
                 logger.exception("Audio capture start failed")
                 await self._abort_session_start()
@@ -70,6 +75,13 @@ class SessionManager:
 
             await self._app_state.broadcaster.broadcast("status", {"recording": True})
             logger.info("Session started: %s", session.id)
+
+    def _on_audio_chunk(self, buffer: bytes) -> None:
+        """PCMチャンクをSTTとVADの両方に転送する。"""
+        if self._stt_client:
+            self._stt_client.feed_audio(buffer)
+        if self._vad:
+            self._vad.feed(buffer)
 
     async def _abort_session_start(self) -> None:
         """セッション開始に失敗した場合のクリーンアップ。"""
@@ -83,6 +95,7 @@ class SessionManager:
             except Exception:
                 logger.exception("Failed to stop STT during abort")
             self._stt_client = None
+        self._vad = None
         self._app_state.current_session = None
         self._app_state.recording = False
         await self._app_state.broadcaster.broadcast(
@@ -110,6 +123,7 @@ class SessionManager:
             if self._stt_client:
                 await self._stt_client.stop()
                 self._stt_client = None
+            self._vad = None
 
             if post_processing:
                 await self._app_state.broadcaster.broadcast("processing_done", {})
@@ -196,7 +210,23 @@ class SessionManager:
         return segment
 
     async def _session_timeout(self) -> None:
-        """MAX_SESSION_DURATION_SEC 後にセッションを自動停止する。"""
-        await asyncio.sleep(MAX_SESSION_DURATION_SEC)
-        logger.info("Session timed out after %d seconds", MAX_SESSION_DURATION_SEC)
-        await self.stop_session(timed_out=True)
+        """最大セッション時間、または発話終了からの無音タイムアウトで自動停止する。"""
+        session_start = time.monotonic()
+        while True:
+            now = time.monotonic()
+            remaining_max = session_start + MAX_SESSION_DURATION_SEC - now
+            last_speech = self._vad.last_speech_time if self._vad else session_start
+            remaining_silence = last_speech + SILENCE_TIMEOUT_SEC - now
+            remaining = min(remaining_max, remaining_silence)
+            if remaining <= 0:
+                reason = (
+                    "max duration" if remaining_max <= remaining_silence else "silence"
+                )
+                logger.info(
+                    "Session timed out (%s) after %.0f seconds",
+                    reason,
+                    now - session_start,
+                )
+                await self.stop_session(timed_out=True)
+                return
+            await asyncio.sleep(remaining)
