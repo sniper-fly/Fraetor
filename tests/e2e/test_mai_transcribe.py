@@ -4,11 +4,6 @@
 `responses` で `requests` ライブラリレベルの応答を差し替える。
 `azure-ai-transcription` SDK は内部で `httpx` ではなく `requests` ベースの
 `RequestsTransport` を使うため、`respx` (httpx専用) ではモックできない。
-
-`src.stt_mai` は `src.config` の値をインポート時に束縛するため、各テストは
-`init_secrets()` 実行後に `MaiTranscribeClient` を遅延インポートする
-(モジュールトップレベルで先にインポートすると空文字列の設定値で
-束縛されてしまう)。
 """
 
 from __future__ import annotations
@@ -18,11 +13,11 @@ import re
 import time
 import wave
 from pathlib import Path
-from unittest.mock import patch
 
 import responses
 
-from src.config import init_secrets
+from src.containers import Container
+from src.dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
 
 _TRANSCRIBE_URL_PATTERN = re.compile(r".*/speechtotext/transcriptions:transcribe.*")
 _SILENCE_PCM = b"\x00\x00" * 1600  # 0.1秒分の無音 (16kHz/16bit/mono)
@@ -34,18 +29,34 @@ _AUDIO_DIR = Path(__file__).parent / "fixtures" / "audio"
 _EXPECTED_TEXT = "今日の会議の議事録をまとめました。よろしくお願いします。"
 
 
+def _make_client(
+    queue: asyncio.Queue[dict[str, str]], *, timeout_sec: float | None = None
+) -> MaiTranscribeClient:
+    container = Container()
+    secrets = container.secrets()
+    settings = container.settings()
+    return MaiTranscribeClient(
+        queue,
+        endpoint=secrets.mai_endpoint,
+        api_key=secrets.mai_api_key,
+        locale=settings.mai_locale,
+        model_name=settings.mai_model_name,
+        timeout_sec=timeout_sec
+        if timeout_sec is not None
+        else settings.mai_timeout_sec,
+        sample_rate=settings.stt_sample_rate,
+    )
+
+
 class TestRealCloudCommunication:
     async def test_normal_speech_is_transcribed_via_real_api(self) -> None:
         """正常系: 実クラウド通信で音声を送信し、認識結果が空でなく返る"""
-        init_secrets()
-        from src.stt_mai import MaiTranscribeClient  # noqa: PLC0415
-
         wav_path = _AUDIO_DIR / "01_normal_speech.wav"
         with wave.open(str(wav_path), "rb") as wf:
             pcm = wf.readframes(wf.getnframes())
 
         queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-        client = MaiTranscribeClient(queue)
+        client = _make_client(queue)
         await client.start()
         client.feed_audio(pcm)
         await client.stop()
@@ -60,9 +71,6 @@ class TestRealCloudCommunication:
 class TestErrorResponses:
     async def test_unauthorized_response_is_swallowed(self) -> None:
         """異常系: 401応答 → stop()が例外を握り潰し、recognizedが来ない"""
-        init_secrets()
-        from src.stt_mai import MaiTranscribeClient  # noqa: PLC0415
-
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.POST,
@@ -71,7 +79,7 @@ class TestErrorResponses:
                 json={"error": "unauthorized"},
             )
             queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-            client = MaiTranscribeClient(queue)
+            client = _make_client(queue)
             await client.start()
             client.feed_audio(_SILENCE_PCM)
             await client.stop()
@@ -80,9 +88,6 @@ class TestErrorResponses:
 
     async def test_rate_limited_response_is_swallowed(self) -> None:
         """異常系: 429応答 → stop()が例外を握り潰し、recognizedが来ない"""
-        init_secrets()
-        from src.stt_mai import MaiTranscribeClient  # noqa: PLC0415
-
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.POST,
@@ -91,7 +96,7 @@ class TestErrorResponses:
                 json={"error": "too many requests"},
             )
             queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-            client = MaiTranscribeClient(queue)
+            client = _make_client(queue)
             await client.start()
             client.feed_audio(_SILENCE_PCM)
             await client.stop()
@@ -100,9 +105,6 @@ class TestErrorResponses:
 
     async def test_server_error_response_is_swallowed(self) -> None:
         """異常系: 5xx応答 → stop()が例外を握り潰し、recognizedが来ない"""
-        init_secrets()
-        from src.stt_mai import MaiTranscribeClient  # noqa: PLC0415
-
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.POST,
@@ -111,7 +113,7 @@ class TestErrorResponses:
                 json={"error": "service unavailable"},
             )
             queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-            client = MaiTranscribeClient(queue)
+            client = _make_client(queue)
             await client.start()
             client.feed_audio(_SILENCE_PCM)
             await client.stop()
@@ -119,9 +121,7 @@ class TestErrorResponses:
         assert queue.empty()
 
     async def test_timeout_is_swallowed(self) -> None:
-        """異常系: MAI_TIMEOUT_SEC超過 → タイムアウトが握り潰され、recognizedが来ない"""
-        init_secrets()
-        from src.stt_mai import MaiTranscribeClient  # noqa: PLC0415
+        """異常系: タイムアウト超過 → タイムアウトが握り潰され、recognizedが来ない"""
 
         def _slow_response(
             request: object,
@@ -129,17 +129,14 @@ class TestErrorResponses:
             time.sleep(0.5)
             return (200, {}, "{}")
 
-        with (
-            responses.RequestsMock(assert_all_requests_are_fired=False) as rsps,
-            patch("src.stt_mai.MAI_TIMEOUT_SEC", 0.1),
-        ):
+        with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
             rsps.add_callback(
                 responses.POST,
                 _TRANSCRIBE_URL_PATTERN,
                 callback=_slow_response,
             )
             queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-            client = MaiTranscribeClient(queue)
+            client = _make_client(queue, timeout_sec=0.1)
             await client.start()
             client.feed_audio(_SILENCE_PCM)
             await client.stop()

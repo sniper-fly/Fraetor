@@ -11,18 +11,16 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from src.config import init_secrets, validate_api_keys
-from src.secrets_loader import load_secrets
+from src.shared.config.secrets_loader import load_secrets
 
 
 class TestRealAwsSso:
-    def test_init_secrets_succeeds_via_real_sso_session(self) -> None:
-        """正常系: 実AWS SSOセッション経由でシークレットが取得でき、警告が出ない"""
-        init_secrets()
+    def test_load_secrets_succeeds_via_real_sso_session(self) -> None:
+        """正常系: 実AWS SSOセッション経由でシークレットが取得できる"""
+        secrets = load_secrets()
 
-        warnings = validate_api_keys()
-
-        assert warnings == []
+        assert secrets.mai_api_key
+        assert secrets.vertex_sa_info
 
 
 class TestInvalidParameters:
