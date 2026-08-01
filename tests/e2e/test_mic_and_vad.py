@@ -9,6 +9,7 @@ STT 連携・SSE 配信という統合動作を実際の音声データで検証
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING
 
 import httpx
@@ -19,6 +20,23 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _SESSION_END_WAIT_SEC = 30.0
+
+# fixtures/audio/README.md に記載の想定発話。認識結果の突き合わせ表示にのみ使う
+# (音声認識の表記揺れがあるため完全一致は求めない)
+_EXPECTED_TEXTS = {
+    "01_normal_speech.wav": "今日の会議の議事録をまとめました。よろしくお願いします。",
+    "02_multiple_utterances.wav": "明日の予定を確認します。会議は午後からです。",
+    "04_short_utterance.wav": "はい / テスト",
+}
+
+
+def _print_recognized(wav_filename: str, events: list[dict[str, str]]) -> None:
+    texts = [
+        json.loads(e["data"])["text"] for e in events if e["event"] == "recognized"
+    ]
+    print(
+        f"\n[期待発話] {_EXPECTED_TEXTS[wav_filename]}\n[認識結果] {' / '.join(texts)}"
+    )
 
 
 async def _run_session(base_url: str) -> list[dict[str, str]]:
@@ -53,6 +71,7 @@ class TestFileAudioAndVad:
         assert "session_end" in event_names
         recognized = [e for e in events if e["event"] == "recognized"]
         assert recognized, "recognized イベントが1件も届かなかった"
+        _print_recognized("01_normal_speech.wav", events)
 
     async def test_multiple_utterances_with_short_pause_stay_in_one_session(
         self, fraetor_server_with_audio: Callable[[str], str]
@@ -66,6 +85,7 @@ class TestFileAudioAndVad:
         # 開始時の status(recording=True) 以外に途中停止の status(recording=False) が
         # 挟まっていないこと (短いポーズでタイムアウトしていない証跡)
         assert len(status_events) == 1
+        _print_recognized("02_multiple_utterances.wav", events)
 
     async def test_short_utterance_is_recognized(
         self, fraetor_server_with_audio: Callable[[str], str]
@@ -77,6 +97,7 @@ class TestFileAudioAndVad:
 
         recognized = [e for e in events if e["event"] == "recognized"]
         assert recognized, "短い発話が認識されなかった"
+        _print_recognized("04_short_utterance.wav", events)
 
     async def test_silence_only_stops_via_timeout_without_false_detection(
         self, fraetor_server_with_audio: Callable[[str], str]

@@ -29,6 +29,11 @@ _SILENCE_PCM = b"\x00\x00" * 1600  # 0.1秒分の無音 (16kHz/16bit/mono)
 _AUDIO_DIR = Path(__file__).parent / "fixtures" / "audio"
 
 
+# fixtures/audio/README.md に記載の想定発話。認識結果の突き合わせ表示にのみ使う
+# (音声認識の表記揺れがあるため完全一致は求めない)
+_EXPECTED_TEXT = "今日の会議の議事録をまとめました。よろしくお願いします。"
+
+
 class TestRealCloudCommunication:
     async def test_normal_speech_is_transcribed_via_real_api(self) -> None:
         """正常系: 実クラウド通信で音声を送信し、認識結果が空でなく返る"""
@@ -49,6 +54,7 @@ class TestRealCloudCommunication:
         event = queue.get_nowait()
         assert event["type"] == "recognized"
         assert event["text"], "認識結果テキストが空だった"
+        print(f"\n[期待発話] {_EXPECTED_TEXT}\n[認識結果] {event['text']}")
 
 
 class TestErrorResponses:
