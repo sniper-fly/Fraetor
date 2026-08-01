@@ -78,7 +78,7 @@ class TestStop:
         request = mock_sdk_client.transcribe.call_args.args[0]
         # enhancedMode.model で MAI モデルを指定 (REST 仕様準拠)
         assert request.definition.locales == ["ja"]
-        assert request.definition.enhanced_mode["model"] == "mai-transcribe-1"
+        assert request.definition.enhanced_mode["model"] == "mai-transcribe-1.5"
         assert request.definition.enhanced_mode["enabled"] is True
 
         event = queue.get_nowait()
