@@ -58,3 +58,25 @@ uv run fraetor
 **KDE**: システム設定 → ショートカット → カスタムショートカット
 
 **Sway / Hyprland**: 設定ファイルに `bindsym` / `bind` を追加
+
+## E2Eテスト
+
+`tests/e2e/` 配下は通常の `uv run pytest` の探索対象から除外されている (`pyproject.toml` の `norecursedirs`)。リリース前にローカルで明示的に実行する低頻度の検証用で、実プロセス・実クラウド通信 (Azure MAI Transcribe / AWS SSM) を伴う。
+
+### 前提
+
+- 上記の「シークレット」「AWS への認証」セットアップが完了していること (SSO セッション必須)
+- 音声フィクスチャ: `tests/e2e/fixtures/audio/README.md` の手順に従って各開発者が録音して配置する (実際の声を含むためコミット対象外)
+- Playwright の Chromium ブラウザバイナリと OS 依存ライブラリ:
+  ```bash
+  uv run playwright install --with-deps chromium
+  ```
+  `--with-deps` は `apt` 経由で共有ライブラリをインストールするため `sudo` 権限が必要。バイナリのみで良い場合は `uv run playwright install chromium` (sudo不要)。
+
+### 実行
+
+```bash
+uv run pytest tests/e2e --ignore=tests/e2e/test_browser_ui.py
+uv run pytest tests/e2e/test_browser_ui.py
+```
+

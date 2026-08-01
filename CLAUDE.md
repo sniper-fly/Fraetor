@@ -21,3 +21,8 @@ dataclassではなく、pydanticのBaseModelを利用する。
 依存関係追加はpyproject.tomlを直接編集せず、 uv add で最版安定版追加する
 
 pythonコマンドを単体で使うのではなく、基本的にuv runなどを利用する
+
+## E2Eテスト実行時の注意
+
+`pytest-playwright` (同期API) と `pytest-asyncio` には既知の非互換性がある(Playwright の同期クライアントがプロセス内に専用イベントループを立てっぱなしにするため)。`tests/e2e/test_browser_ui.py` (Playwright使用) と他の非同期E2Eテストを同一 `pytest` セッションで実行すると、2つ目以降の非同期テストが `RuntimeError: Runner.run() cannot be called from a running event loop` で失敗する。README.md記載の2コマンド分割 (`--ignore=tests/e2e/test_browser_ui.py` と単独実行) を必ず守ること。1コマンドでの一括実行はできない。
+

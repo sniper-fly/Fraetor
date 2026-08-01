@@ -1,11 +1,15 @@
+import os
 from pathlib import Path
 from typing import Any
 
 from src.secrets_loader import load_secrets
 
 # --- セッション ---
-MAX_SESSION_DURATION_SEC: int = 600
-SILENCE_TIMEOUT_SEC: int = 120
+# E2E テストでタイムアウト待ちを現実的な時間に短縮するための環境変数オーバーライド
+MAX_SESSION_DURATION_SEC: int = int(
+    os.environ.get("FRAETOR_MAX_SESSION_DURATION_SEC", "600")
+)
+SILENCE_TIMEOUT_SEC: int = int(os.environ.get("FRAETOR_SILENCE_TIMEOUT_SEC", "120"))
 
 # --- VAD (Silero) ---
 VAD_THRESHOLD: float = 0.5
@@ -23,11 +27,12 @@ MAI_TIMEOUT_SEC: int = 60
 
 # --- サーバー ---
 SERVER_HOST: str = "127.0.0.1"
-SERVER_PORT: int = 8765
+SERVER_PORT: int = int(os.environ.get("FRAETOR_SERVER_PORT", "8765"))
 SHUTDOWN_DELAY_SEC: float = 0.5
 
 # --- SSE ---
-SSE_KEEPALIVE_SEC: int = 15
+# E2E テストで keepalive 動作の待ち時間を短縮するための環境変数オーバーライド
+SSE_KEEPALIVE_SEC: int = int(os.environ.get("FRAETOR_SSE_KEEPALIVE_SEC", "15"))
 
 # --- 校正 (Proofreading) ---
 VERTEX_LOCATION: str = "global"
@@ -69,5 +74,8 @@ def validate_api_keys() -> list[str]:
 
 
 # --- 履歴 ---
-HISTORY_DIR: Path = Path("~/.voice-input").expanduser()
+# E2E テストで本番の履歴ファイルを汚染しないための環境変数オーバーライド
+HISTORY_DIR: Path = Path(
+    os.environ.get("FRAETOR_HISTORY_DIR", "~/.voice-input")
+).expanduser()
 HISTORY_FILE: Path = HISTORY_DIR / "history.jsonl"

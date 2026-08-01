@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+import contextlib
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_SERVER_PORT = 18765
+_SERVER_URL = f"http://127.0.0.1:{_SERVER_PORT}"
+_STARTUP_TIMEOUT_SEC = 30.0
+_STARTUP_POLL_INTERVAL_SEC = 0.5
+_ENV_AUDIO_FILE = "FRAETOR_AUDIO_FILE"
+_AUDIO_DIR = Path(__file__).parent / "fixtures" / "audio"
+_E2E_TEST_TIMEOUT_SEC = 60
+
+load_dotenv(_PROJECT_ROOT / ".env")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """`tests/e2e/` 配下は実プロセス起動・実クラウド通信を伴うため、
+    単体テスト用の `timeout=10` (pyproject.toml) より長いタイムアウトを
+    個別に適用する。
+    """
+    for item in items:
+        item.add_marker(pytest.mark.timeout(_E2E_TEST_TIMEOUT_SEC))
+
+
+@pytest.fixture(autouse=True)
+def _block_real_aws_calls() -> None:
+    """`tests/conftest.py` の実 AWS 通信ブロックを E2E 配下でのみ解除する。
+
+    正常系シナリオ (AWS SSM 認証) は実際の AWS SSO セッション経由での
+    通信を検証する必要があるため、親 conftest の同名 autouse fixture を
+    再定義して上書きする (pytest は最も近い conftest.py の定義を優先する)。
+    """
+
+
+def _wait_for_server(process: subprocess.Popen[bytes]) -> None:
+    deadline = time.monotonic() + _STARTUP_TIMEOUT_SEC
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            msg = f"fraetor server process exited early (code={process.returncode})"
+            raise RuntimeError(msg)
+        try:
+            urllib.request.urlopen(_SERVER_URL, timeout=1)
+        except urllib.error.URLError:
+            time.sleep(_STARTUP_POLL_INTERVAL_SEC)
+            continue
+        else:
+            return
+    msg = f"fraetor server did not become ready within {_STARTUP_TIMEOUT_SEC}s"
+    raise RuntimeError(msg)
+
+
+def _start_server(
+    tmp_path: Path, extra_env: dict[str, str], *, module: str = "src"
+) -> subprocess.Popen[bytes]:
+    env = {
+        **os.environ,
+        "FRAETOR_SERVER_PORT": str(_SERVER_PORT),
+        "FRAETOR_MAX_SESSION_DURATION_SEC": "20",
+        "FRAETOR_SILENCE_TIMEOUT_SEC": "3",
+        "FRAETOR_HISTORY_DIR": str(tmp_path / "history"),
+        **extra_env,
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-m", module],
+        cwd=_PROJECT_ROOT,
+        env=env,
+    )
+    _wait_for_server(process)
+    return process
+
+
+def _stop_server(process: subprocess.Popen[bytes]) -> None:
+    # /api/shutdown は録音中なら stop_session() (実クラウド通信含む) の完了を
+    # 待ってからレスポンスを返すため、短いタイムアウトだと打ち切ってしまう。
+    with contextlib.suppress(urllib.error.URLError, TimeoutError):
+        urllib.request.urlopen(
+            urllib.request.Request(f"{_SERVER_URL}/api/shutdown", method="POST"),
+            timeout=15,
+        )
+    try:
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+@pytest.fixture
+def fraetor_server(tmp_path: Path) -> Generator[str]:
+    """実プロセスとして `uv run fraetor` 相当を起動し、ベースURLを返す。
+
+    タイムアウト・ポート・履歴ファイルは環境変数で E2E 専用の値に
+    短縮/隔離する。マイクは実行環境のデフォルト入力デバイスをそのまま
+    使う (録音内容を検証しないシナリオ向け)。
+    """
+    process = _start_server(tmp_path, {})
+    try:
+        yield _SERVER_URL
+    finally:
+        _stop_server(process)
+
+
+class AudioServerHandle:
+    """録音済み WAV を「マイク入力」として使う実サーバーの起動ハンドル。
+
+    `start()` 実行後は `.process` で実 `subprocess.Popen` にアクセスできる
+    (プロセスの終了コード等を検証するテスト向け)。
+    """
+
+    def __init__(self, tmp_path: Path) -> None:
+        self._tmp_path = tmp_path
+        self.process: subprocess.Popen[bytes] | None = None
+
+    def start(
+        self, wav_filename: str, *, extra_env: dict[str, str] | None = None
+    ) -> str:
+        wav_path = _AUDIO_DIR / wav_filename
+        self.process = _start_server(
+            self._tmp_path,
+            {_ENV_AUDIO_FILE: str(wav_path), **(extra_env or {})},
+            module="tests.e2e.e2e_entrypoint",
+        )
+        return _SERVER_URL
+
+
+@pytest.fixture
+def fraetor_audio_server_handle(tmp_path: Path) -> Generator[AudioServerHandle]:
+    """`AudioServerHandle` を提供する fixture。
+
+    `tests/e2e/e2e_entrypoint.py` (E2E 専用のコンポジションルート) 経由で
+    起動し、`AudioCapture` を `FileAudioCapture` に差し替える。本番の
+    `create_audio_capture()` やハードウェアマイクには一切依存しない。
+    """
+    handle = AudioServerHandle(tmp_path)
+    try:
+        yield handle
+    finally:
+        if handle.process is not None:
+            _stop_server(handle.process)
+
+
+@pytest.fixture
+def fraetor_server_with_audio(
+    fraetor_audio_server_handle: AudioServerHandle,
+) -> Callable[[str], str]:
+    """録音済み WAV を「マイク入力」として使う実サーバーを起動するファクトリ。
+
+    戻り値の関数は `fixtures/audio/` 配下のファイル名を受け取り、
+    起動後のベースURLを返す。プロセス自体にアクセスしたいテストは
+    `fraetor_audio_server_handle` を直接使う。
+    """
+    return fraetor_audio_server_handle.start
+
+
+@pytest.fixture
+def broken_audio_device_env(tmp_path: Path) -> str:
+    """存在しない ALSA カードを指す `asound.conf` のパスを返す。
+
+    サーバー起動時に `ALSA_CONFIG_PATH` としてこのパスを渡すと、
+    デフォルト入力デバイスのオープンに必ず失敗する状態を再現できる。
+    """
+    conf_path = tmp_path / "broken_asound.conf"
+    conf_path.write_text(
+        "pcm.!default {\n"
+        "    type hw\n"
+        "    card 9999\n"
+        "}\n"
+        "ctl.!default {\n"
+        "    type hw\n"
+        "    card 9999\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    return str(conf_path)
+
+
+@pytest.fixture
+def fraetor_server_with_broken_audio(
+    broken_audio_device_env: str, tmp_path: Path
+) -> Generator[str]:
+    """デフォルト入力デバイスのオープンが必ず失敗する状態でサーバーを起動する。"""
+    process = _start_server(tmp_path, {"ALSA_CONFIG_PATH": broken_audio_device_env})
+    try:
+        yield _SERVER_URL
+    finally:
+        _stop_server(process)

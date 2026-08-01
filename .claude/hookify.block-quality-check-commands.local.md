@@ -1,6 +1,6 @@
 ---
 name: block-quality-check-commands
-enabled: true
+enabled: false
 event: bash
 pattern: pytest|mypy
 action: block

@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import wave
+from typing import TYPE_CHECKING
+
+from src.audio_base import AudioCapture
+from src.config import STT_SAMPLE_RATE
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_CHUNK_DURATION_SEC = 0.1
+_SAMPLE_WIDTH_BYTES = 2  # 16-bit
+
+
+class FileAudioCapture(AudioCapture):
+    """WAV ファイルを実時間ペースで読み込み、マイク入力を模擬する実装。
+
+    E2E テストでハードウェアマイクへの依存を避けつつ、VAD の発話検知や
+    セッションタイムアウトの実時間ロジックを意味のある形で検証するために
+    使う。ファイル終端に達したらそれ以上コールバックを呼ばなくなる
+    (無音区間として振る舞う)。
+    """
+
+    def __init__(self, wav_path: Path, sample_rate: int = STT_SAMPLE_RATE) -> None:
+        super().__init__(sample_rate)
+        self._wav_path = wav_path
+        self._task: asyncio.Task[None] | None = None
+
+    async def start_recording(self, sink: Callable[[bytes], object]) -> None:
+        with wave.open(str(self._wav_path), "rb") as wf:
+            if wf.getframerate() != self._sample_rate:
+                msg = (
+                    f"WAV サンプルレートが不一致です: "
+                    f"{wf.getframerate()} != {self._sample_rate}"
+                )
+                raise ValueError(msg)
+        self._sink = sink
+        self._task = asyncio.create_task(self._play())
+        logger.info("File audio capture started (path=%s)", self._wav_path)
+
+    async def stop_recording(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+        self._sink = None
+        logger.info("File audio capture stopped")
+
+    async def _play(self) -> None:
+        chunk_frames = int(self._sample_rate * _CHUNK_DURATION_SEC)
+        with wave.open(str(self._wav_path), "rb") as wf:
+            while True:
+                chunk = wf.readframes(chunk_frames)
+                if not chunk:
+                    return
+                sink = self._sink
+                if sink is not None:
+                    sink(chunk)
+                await asyncio.sleep(_CHUNK_DURATION_SEC)
