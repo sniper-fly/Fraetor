@@ -22,7 +22,7 @@ STT_SAMPLE_RATE: int = 16000
 # (https://<resource>.cognitiveservices.azure.com) を期待
 MAI_ENDPOINT: str = ""
 MAI_LOCALE: str = "ja"
-MAI_MODEL_NAME: str = "mai-transcribe-1.5"
+MAI_MODEL_NAME: str = "mai-transcribe-1"
 MAI_TIMEOUT_SEC: int = 60
 
 # --- サーバー ---

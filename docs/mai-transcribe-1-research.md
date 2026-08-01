@@ -2,8 +2,6 @@
 
 調査日: 2026-05-09
 
-> **追記 (2026-08-01)**: `mai-transcribe-1` は 2026-08-20 に非推奨 (Deprecated) となるため、後継モデル `mai-transcribe-1.5` へ移行済み (`src/config.py` の `MAI_MODEL_NAME`)。以下は移行前の調査時点のスナップショットとして残す。
-
 ## 1. 調査目的
 
 現行 Fraetor は Azure Speech Services の Continuous Recognition (`azure-cognitiveservices-speech` SDK) を用いて日本語のリアルタイム文字起こしを行っている。Microsoft が新たに公開した `MAI-Transcribe-1` を採用することで、より高精度な認識結果を得られるかを検証する。本ドキュメントは公式情報源(microsoft.ai / techcommunity.microsoft.com / learn.microsoft.com)のみを根拠に、実装に必要な情報を整理する。
