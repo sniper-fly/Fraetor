@@ -118,11 +118,14 @@ pyperclip でクリップボードにコピー
 
 ## 音声キャプチャ (プラットフォーム別ライフサイクル戦略)
 
-抽象基底 `AudioCapture` (`audio_base.py`) が PCM 取得 (16kHz/16-bit/mono、
-コールバック→シンク書き込み) を共通化し、ストリームのライフサイクル戦略だけを
-実装ごとに分ける。`create_audio_capture()` (`audio.py`) がプラットフォームを
-判定して実装を選択し、コンポジションルート (`app.py`) が `SessionManager` に
-DI で注入する。プラットフォーム分岐はファクトリの1箇所のみ。
+`AudioCapturePort` (`dictation/domain/ports.py`) がドメイン層のポートを定義し、
+`SounddeviceCaptureBase` (`dictation/infrastructure/audio/sounddevice_base.py`)
+が sounddevice 依存の共通実装 (PCM 取得: 16kHz/16-bit/mono、コールバック→
+シンク書き込み) を提供する。ストリームのライフサイクル戦略だけを実装ごとに
+分ける。`create_audio_capture()`
+(`dictation/infrastructure/audio/factory.py`) がプラットフォームを判定して
+実装を選択し、DIコンテナ (`containers.py`) が `AudioPipelineCoordinator` に
+注入する。プラットフォーム分岐はファクトリの1箇所のみ。
 
 | 実装 | 対象 | 戦略 |
 |------|------|------|
@@ -140,10 +143,13 @@ DI で注入する。プラットフォーム分岐はファクトリの1箇所�
 
 ## 発話区間検出 (VAD)
 
-`SpeechActivityDetector` (`vad.py`) が Silero VAD を使い、発話終了からの
-無音タイムアウトを検出する。`SessionManager` が `AudioCapture` のシンクを
-STT (`feed_audio`) と VAD (`feed`) の両方に転送する composite sink として
-組み立てる。
+`SpeechActivityDetectorPort` (`dictation/domain/ports.py`) がポートを定義し、
+`SileroSpeechActivityDetector`
+(`dictation/infrastructure/vad/silero_vad_detector.py`) が Silero VAD を使い、
+発話終了からの無音タイムアウトを検出する。`AudioPipelineCoordinator`
+(`dictation/application/audio_pipeline_coordinator.py`) が `AudioCapturePort`
+のシンクを STT (`feed_audio`) と VAD (`feed`) の両方に転送する composite sink
+として組み立てる。
 
 - Silero VAD は 512サンプル (16kHz時) 固定のウィンドウしか受け付けないため、
   `SpeechActivityDetector` 内部でバッファリングし、512サンプル単位に
@@ -176,16 +182,28 @@ STT (`feed_audio`) と VAD (`feed`) の両方に転送する composite sink と�
 
 ## セグメント管理
 
+録音中の実行時状態 (`RecordingSession`) と保存確定後のレコード
+(`FinalizedSession`) はライフサイクル・不変条件が異なるため、別の集約として
+モデル化する (詳細は「アーキテクチャ層構成」章参照)。
+
 ```python
+# dictation/domain/models.py
 class Segment(BaseModel):
     id: int
     text: str            # MAI Transcribe の認識結果
 
-class Session(BaseModel):
+class RecordingSession(BaseModel):
     id: str              # UUID
+    segments: list[Segment] = []
+    started_at: datetime
+
+# transcript_history/domain/models.py
+class FinalizedSession(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    id: str
     segments: list[Segment]
     started_at: datetime
-    ended_at: datetime | None
+    ended_at: datetime
     timed_out: bool      # セッション時間上限で終了したか
 ```
 
@@ -214,6 +232,47 @@ GEMINI_MODEL = "gemini-3.1-flash-lite-preview"  # 校正用モデル
 PROOFREAD_TIMEOUT_SEC = 15           # 校正 API タイムアウト
 ```
 
+## アーキテクチャ層構成
+
+`src/` は Domain / Application / Infrastructure / Presentation の4層構成を
+取る。境界づけられたコンテキストは単一で、内部を `dictation` (録音・認識・
+タイムアウト) / `transcript_history` (確定履歴CRUD) / `proofreading` (校正)
+の3モジュールに分割し、各モジュール内をレイヤー化する
+(`shared/` は横断的インフラ、`presentation/` はHTTP層)。
+
+```
+dictation/
+├── domain/            # RecordingSession, Segment, 各種ポート (ABC)
+├── application/        # RecordingSessionService, AudioPipelineCoordinator,
+│                        # SttEventRelay, SessionTimeoutMonitor
+└── infrastructure/     # sounddevice実装, MaiTranscribeClient,
+                         # SileroSpeechActivityDetector, SSEBroadcaster
+
+transcript_history/
+├── domain/            # FinalizedSession, HistoryRepositoryPort, ClipboardPort
+├── application/        # FinalizeSessionUseCase
+└── infrastructure/     # JsonlHistoryRepository, PyperclipClipboard
+
+proofreading/
+├── domain/            # ProofreadResult, ProofreadingPort
+├── application/        # ProofreadTextUseCase
+└── infrastructure/     # VertexGeminiProofreader
+
+shared/                 # Settings, Secrets, ProcessShutdownerPort (横断的)
+presentation/           # FastAPIルート・スキーマ (HTTP変換のみ)
+```
+
+依存方向: `Presentation → Application → Domain`、`Infrastructure → Domain`
+(逆方向のimportは禁止)。Domain層はPydantic以外のサードパーティSDKに依存しない。
+外部依存 (STT/Audio/Proofreading/履歴永続化/クリップボード/SSE配信/プロセス
+制御) はすべて対応モジュールの `domain/ports.py` にポート (ABC) を定義し、
+`infrastructure/` 配下が実装する。
+
+DIコンテナ (`dependency-injector`) を `src/containers.py` の `Container` に
+一元化する。FastAPIルートへの `@inject`/`Provide[]` wiring は mypy strict
+との相性問題があるため使わず、`presentation/app.py` の lifespan 内で
+Containerから取得したインスタンスを `app.state` に明示的に代入する。
+
 ## 技術スタック
 
 | レイヤー | 技術 |
@@ -227,6 +286,7 @@ PROOFREAD_TIMEOUT_SEC = 15           # 校正 API タイムアウト
 | フロントエンド | HTMX + SSE + TailwindCSS (CDN) |
 | 履歴保存 | JSONL (`~/.voice-input/history.jsonl`) |
 | クリップボード | pyperclip (Linux: xclip/wl-copy, macOS: pbcopy を自動選択) |
+| DIコンテナ | dependency-injector |
 
 ## 非機能要件
 
