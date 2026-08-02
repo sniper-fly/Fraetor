@@ -32,9 +32,14 @@
             class="px-2 py-0.5 rounded text-xs font-medium bg-green-600 text-white">ON</button>
         </div>
       </div>
-      <button id="btn-shutdown" onclick="shutdownServer()"
-        class="px-2 py-1 rounded bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-sm transition-colors"
-        title="サーバーを停止">&#x23FB;</button>
+      <div class="flex items-center gap-6">
+        <button id="btn-copy-main" onclick="copyMainText()"
+          class="px-2 py-1 rounded bg-gray-700 hover:bg-blue-700 text-gray-300 hover:text-white text-sm transition-colors"
+          title="クリップボードにコピー">&#x1F4CB;</button>
+        <button id="btn-shutdown" onclick="shutdownServer()"
+          class="px-2 py-1 rounded bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-sm transition-colors"
+          title="サーバーを停止">&#x23FB;</button>
+      </div>
     </div>
 
     <!-- メインタブ: セッション表示 -->
@@ -55,6 +60,11 @@
         <p class="text-gray-500">読み込み中...</p>
       </div>
     </div>
+  </div>
+
+  <div id="copy-toast"
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded bg-gray-700 text-white text-sm shadow-lg opacity-0 pointer-events-none transition-opacity duration-200">
+    コピーしました
   </div>
 
 <script>
@@ -97,6 +107,31 @@ function updateRecordingUI(recording) {
   }
 }
 
+let copyToastTimeoutId = null;
+
+function showCopyToast() {
+  const toast = document.getElementById('copy-toast');
+  toast.classList.remove('opacity-0');
+  clearTimeout(copyToastTimeoutId);
+  copyToastTimeoutId = setTimeout(() => {
+    toast.classList.add('opacity-0');
+  }, 1500);
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showCopyToast();
+  } catch {
+    // クリップボードアクセス不可時は何もしない
+  }
+}
+
+function copyMainText() {
+  const text = document.getElementById('editor-textarea').value;
+  copyToClipboard(text);
+}
+
 async function shutdownServer() {
   if (!confirm('サーバーを停止しますか？')) return;
   const btn = document.getElementById('btn-shutdown');
@@ -118,6 +153,14 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function escapeAttr(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function appendToTextarea(text) {
@@ -294,10 +337,11 @@ async function loadHistory() {
     }
     container.innerHTML = sessions.map(s => {
       const dt = new Date(s.started_at).toLocaleString('ja-JP');
-      return `<div class="bg-gray-800 rounded p-3">
+      return `<div class="bg-gray-800 rounded p-3 cursor-pointer hover:bg-gray-700 transition-colors"
+        onclick="copyHistoryCard(this)" data-text="${escapeAttr(s.text)}" title="クリックしてコピー">
         <div class="flex justify-between items-start">
           <div class="text-xs text-gray-400 mb-1">${escapeHtml(dt)}</div>
-          <button onclick="deleteHistory('${escapeHtml(s.id)}')"
+          <button onclick="deleteHistory(event, '${escapeHtml(s.id)}')"
             class="text-gray-500 hover:text-red-400 text-xs ml-2 shrink-0">削除</button>
         </div>
         <div class="text-sm">${escapeHtml(s.text)}</div>
@@ -308,7 +352,15 @@ async function loadHistory() {
   }
 }
 
-async function deleteHistory(sessionId) {
+function copyHistoryCard(cardEl) {
+  copyToClipboard(cardEl.dataset.text);
+  const original = cardEl.className;
+  cardEl.className = original.replace('bg-gray-800', 'bg-blue-900');
+  setTimeout(() => { cardEl.className = original; }, 300);
+}
+
+async function deleteHistory(event, sessionId) {
+  event.stopPropagation();
   try {
     const res = await fetch(`/api/history/${sessionId}`, { method: 'DELETE' });
     if (res.ok) {

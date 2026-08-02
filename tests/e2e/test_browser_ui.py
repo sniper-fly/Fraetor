@@ -69,6 +69,69 @@ class TestBrowserUi:
             f'document.querySelectorAll("{delete_button_selector}").length === 0'
         )
 
+    def test_main_copy_button_copies_textarea_content(
+        self, page: Page, fraetor_server_with_audio: Callable[[str], str]
+    ) -> None:
+        """正常系: メイン画面のコピーボタン押下でtextareaの内容がクリップボードに渡る。
+
+        ヘッドレス環境では `navigator.clipboard` へのOS権限が不安定なため、
+        `writeText` を差し替えて呼び出し引数を記録する方式で検証する。
+        """
+        page.add_init_script(
+            "window.__clipboardWrites = [];"
+            " navigator.clipboard.writeText ="
+            " (t) => { window.__clipboardWrites.push(t); return Promise.resolve(); };"
+        )
+        base_url = fraetor_server_with_audio("05_toggle_recording.wav")
+        page.goto(base_url)
+
+        page.evaluate("fetch('/api/toggle-recording', {method: 'POST'})")
+        page.wait_for_function(
+            "document.getElementById('editor-textarea').value.length > 0",
+            timeout=_UI_WAIT_MS,
+        )
+        expected_text = page.locator("#editor-textarea").input_value()
+
+        page.locator("#btn-copy-main").click()
+
+        writes = page.evaluate("window.__clipboardWrites")
+        assert writes == [expected_text]
+        toast = page.locator("#copy-toast")
+        page.wait_for_function(
+            "!document.getElementById('copy-toast').classList.contains('opacity-0')"
+        )
+        assert toast.inner_text().strip() == "コピーしました"
+
+    def test_history_card_click_copies_text_without_triggering_on_delete(
+        self, page: Page, fraetor_server_with_audio: Callable[[str], str]
+    ) -> None:
+        """正常系: 履歴カードクリックでコピーされ、削除ボタンではコピーされない"""
+        page.add_init_script(
+            "window.__clipboardWrites = [];"
+            " navigator.clipboard.writeText ="
+            " (t) => { window.__clipboardWrites.push(t); return Promise.resolve(); };"
+        )
+        base_url = fraetor_server_with_audio("05_toggle_recording.wav")
+        _run_one_session_and_finalize(base_url)
+
+        page.goto(base_url)
+        page.locator("#tab-history").click()
+        history_list = page.locator("#history-list")
+        page.wait_for_function(
+            "document.querySelectorAll(\"[onclick^='deleteHistory']\").length > 0"
+        )
+
+        card = history_list.locator("div.bg-gray-800").first
+        expected_text = card.locator("div.text-sm").inner_text()
+        card.click()
+        assert page.evaluate("window.__clipboardWrites") == [expected_text]
+        page.wait_for_function(
+            "!document.getElementById('copy-toast').classList.contains('opacity-0')"
+        )
+
+        history_list.locator("button", has_text="削除").first.click()
+        assert page.evaluate("window.__clipboardWrites") == [expected_text]
+
     def test_two_consecutive_recordings_do_not_mix_in_textarea(
         self, page: Page, fraetor_server_with_audio: Callable[[str], str]
     ) -> None:
