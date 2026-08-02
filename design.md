@@ -77,11 +77,19 @@ pyperclip でクリップボードにコピー
 └──────────────────────────────────────────────────┘
 ```
 
-- `<textarea>` に確定済みテキストを蓄積。自由にカーソル移動・編集可能
-- textarea の下に interim テキストを読み取り専用で表示
-- SSE `recognized` イベント受信時: textarea 末尾にテキスト追加 (カーソル位置を保持)
-- SSE `session_end` 受信時: 校正ON なら `POST /api/proofread` で校正後、`POST /api/finalize-session` で送信
-- 新セッション開始時: textarea をクリア
+- `<textarea>` には常に「表示キュー先頭 (`sessionQueue[0]`) のセッション」の
+  確定済みテキストのみを表示する。自由にカーソル移動・編集可能
+- textarea の下に interim テキストを読み取り専用で表示 (先頭セッションの分のみ)
+- SSE `recognized` イベント受信時: `session_id` が指す表示キュー内セッションに
+  テキストを蓄積。先頭セッションの場合のみ textarea 末尾に追加表示
+  (カーソル位置を保持)
+- SSE `session_end` 受信時: 該当セッションを完了済みにする。先頭セッションが
+  完了していれば、校正ON時は `POST /api/proofread` で校正後、
+  `POST /api/finalize-session` で送信し確定する。**textarea はこの時点では
+  クリアしない**。確定済みのテキストは、次のセッションの録音が開始され
+  表示が切り替わるまでそのまま表示され続ける (詳細は「セッション管理」章参照)
+- SSE `status(recording=true)` 受信時: 新セッションが表示キュー先頭なら、
+  ここで初めて textarea をクリアして表示を切り替える
 
 ### 履歴タブ
 
@@ -109,11 +117,13 @@ pyperclip でクリップボードにコピー
 
 | 項目 | 仕様 |
 |------|------|
-| セッション開始 | `POST /api/toggle-recording` → MAI Transcribe 接続 → マイクキャプチャ開始 |
-| セッション終了 | 再トグル、セッション時間上限 (10分) 到達、または発話終了から2分間の無音 |
-| ブラウザ表示 | セッション開始時にメインタブの表示をリセット |
-| クリップボード | 当該セッションのテキストのみ |
-| 履歴保存 | セッション終了時に JSONL に追記 |
+| セッション開始 | `POST /api/toggle-recording` → MAI Transcribe 接続 → マイクキャプチャ開始。SSE `status(recording=true, session_id)` でブラウザの表示キューにセッションを登録し、新セッションが表示キュー先頭ならここで初めて textarea をクリアして表示を切り替える |
+| セッション終了 (録音停止) | 再トグル、セッション時間上限 (10分) 到達、または発話終了から2分間の無音。`RecordingSessionService.stop_session()` は文字起こし本体 (STT の `stop()`) を待たずに即座に返る |
+| 文字起こし処理 | 録音停止と非同期に `TranscriptionQueue` がFIFOで直列処理する (詳細は「文字起こしキュー」章参照)。処理中でも次のセッションをすぐに開始できる |
+| ブラウザ表示 (セッション分離) | すべてのSSEイベントに `session_id` が乗る。ブラウザは `session_id` ごとに独立したテキストを蓄積する表示キュー (`sessionQueue`) を持ち、textareaには常にキュー先頭セッションの内容のみを表示する。他セッションの `recognized` 結果はtextareaに一切反映されない (詳細は「文字起こしキュー」章参照) |
+| 自動確定フロー | 表示キュー先頭のセッションが `session_end` を受信すると、校正ON時は校正後に `POST /api/finalize-session` (session_id指定) で確定 → 表示キューから除去 → 次のセッションが既に完了済みなら即座に連続して確定する。**textareaは確定直後にはクリアしない**。確定済みのテキストは、次のセッションの録音が開始され表示が切り替わるまでそのまま表示され続ける (即座にクリアすると確定済みテキストが一瞬しか見えずに消えてしまうため)。複数セッションが同時に完了待ちでも、**完了順に1件ずつ自動確定**され、ユーザーの手動操作は不要 |
+| クリップボード | 直近に確定したセッションのテキストのみがコピーされる (他セッションの内容と混在しない) |
+| 履歴保存 | 文字起こし完了時ではなく、確定 (`finalize-session`) 時に JSONL に追記。各エントリは対応する1セッションの内容のみを含み、他セッションと混在しない |
 | 履歴削除 | `DELETE /api/history/{session_id}` で個別削除 |
 
 ## 音声キャプチャ (プラットフォーム別ライフサイクル戦略)
@@ -164,20 +174,34 @@ pyperclip でクリップボードにコピー
 
 ## データフロー
 
+録音の開始/停止 (レーン1) と文字起こし処理 (レーン2) は非同期に進行する。
+レーン1が即座に完了することで、レーン2がまだ処理中でも次の録音を
+すぐに開始できる (「文字起こしキュー」章参照)。
+
 ```
-[録音中]
+[レーン1: 録音中 (RecordingSessionService / AudioPipelineCoordinator)]
   マイク -> sounddevice(PCM, 常駐ストリーム) -> MAI Transcribe (バッファリング)
                                              -> SpeechActivityDetector (Silero VAD)
 
 [再トグル or 10分経過 or 発話終了から2分間無音]
-  録音停止 -> MAI Transcribe バッチ認識
-    -> recognized  -> SSE("recognized", seg-N) -> ブラウザ (緑表示/確定)
-    -> session_end をブラウザに送信
-    -> (校正ON時) ブラウザが POST /api/proofread でテキスト校正
+  録音停止 (STTのstop()は呼ばない)
+    -> stt_client と専用event_queueをTranscriptionQueueにジョブとしてenqueue
+    -> ここで即座にstop_session()が返る (次のstart_session()をすぐ受付可能)
+    -> SSE("status", recording=false) をブラウザに送信
+
+[レーン2: 文字起こしワーカー (TranscriptionQueue, FIFO・単一ワーカーで直列処理)]
+  ジョブをdequeue -> MAI Transcribe バッチ認識 (stt_client.stop())
+    -> recognized  -> SSE("recognized", session_id, seg-N)
+       -> ブラウザ: session_idごとの表示キューに蓄積 (先頭セッションのみtextareaに反映)
+    -> session_end (session_id付き) をブラウザに送信
+    -> ブラウザ: 先頭セッションが完了済みなら (校正ON時) POST /api/proofread で校正
        -> Vertex AI Gemini で校正 -> textarea 更新
-    -> ブラウザが textarea の内容を POST /api/finalize-session で送信
+    -> ブラウザが session_id + textareaの内容を POST /api/finalize-session で送信
     -> pyperclip にコピー
     -> JSONL に保存 (text フィールドは校正/編集済みテキスト)
+    -> 表示キューから除去、次のセッションへ (textareaは次の録音開始まで
+       クリアせず、確定済みテキストを表示し続ける)
+    -> 次のジョブをdequeue
 ```
 
 ## セグメント管理
@@ -196,6 +220,14 @@ class RecordingSession(BaseModel):
     id: str              # UUID
     segments: list[Segment] = []
     started_at: datetime
+
+class TranscriptionJob(BaseModel):
+    """文字起こし待ちの1セッション分のジョブ (TranscriptionQueueが処理)。"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    session: RecordingSession
+    stt_client: SttEnginePort          # feed_audio済み・stop()未実行
+    event_queue: asyncio.Queue[dict[str, str]]  # このセッション専用のSTT結果キュー
+    timed_out: bool
 
 # transcript_history/domain/models.py
 class FinalizedSession(BaseModel):
@@ -242,9 +274,10 @@ PROOFREAD_TIMEOUT_SEC = 15           # 校正 API タイムアウト
 
 ```
 dictation/
-├── domain/            # RecordingSession, Segment, 各種ポート (ABC)
+├── domain/            # RecordingSession, Segment, TranscriptionJob, 各種ポート (ABC)
 ├── application/        # RecordingSessionService, AudioPipelineCoordinator,
-│                        # SttEventRelay, SessionTimeoutMonitor
+│                        # SttEventRelay, SegmentAccumulator, TranscriptionQueue,
+│                        # SessionTimeoutMonitor
 └── infrastructure/     # sounddevice実装, MaiTranscribeClient,
                          # SileroSpeechActivityDetector, SSEBroadcaster
 
@@ -273,6 +306,64 @@ DIコンテナ (`dependency-injector`) を `src/containers.py` の `Container` �
 との相性問題があるため使わず、`presentation/app.py` の lifespan 内で
 Containerから取得したインスタンスを `app.state` に明示的に代入する。
 
+## 文字起こしキュー
+
+録音 (マイク) のライフサイクルと文字起こし処理 (Azure API呼び出しを含む
+重い処理) を分離し、文字起こし処理中でも次の録音をすぐに開始できるように
+している。
+
+- **`RecordingSessionService`**: 録音の開始/停止のみに責務を絞る。
+  `stop_session()` は文字起こし本体 (STTの`stop()`) を待たずに、
+  `TranscriptionJob` を `TranscriptionQueue` にenqueueして即座に返る。
+- **`AudioPipelineCoordinator`**: セッション開始のたびに専用の
+  `asyncio.Queue` を生成し、STTエンジンに渡す。`stop()` は録音停止のみを
+  行い、STTクライアントとイベントキューの所有権を呼び出し元に返す
+  (STTの`stop()`自体は呼ばない)。
+- **`SttEventRelay`**: 録音中のイベントキューを監視し、`interim`/
+  `recognized` をリアルタイムにSSE配信する。停止後の残イベント処理は
+  行わない。
+- **`SegmentAccumulator`**: STTイベントをセグメントに変換しセッションに
+  追記する共通ロジック。セグメントIDは `session.segments` の長さから
+  算出するため状態を持たず、`SttEventRelay` (録音中) と
+  `TranscriptionQueue` (停止後) の両方から呼び出せる。
+- **`TranscriptionQueue`**: 文字起こしジョブをFIFOキュー+単一ワーカーで
+  直列処理する。ジョブごとにSTTの`stop()`実行、`processing`/
+  `processing_done`/`recognized`/`session_end`のSSE配信 (いずれも
+  `session_id`付き)、`pending_sessions`への追加を行う。
+
+セッション分離 (`session_id`によるクロスセッション分離): 全SSEイベント
+(`status`/`interim`/`recognized`/`processing`/`processing_done`/
+`session_end`) に発生元セッションの `session_id` を含める。ブラウザは
+`session_id` ごとに独立したテキストを蓄積し、textareaにはキュー先頭の
+セッションのみを表示する (詳細は「セッション管理」章参照)。サーバー側の
+`AppState.pending_sessions` も単一値ではなく `list[FinalizedSession]` で
+保持し、`finalize-session` リクエストの `session_id` で個別に取り出す
+(`pop_pending_session`)。これにより、複数セッションの文字起こしが連続
+完了しても後発が前発を上書きすることはなく、直列利用・並行利用のいずれでも
+各セッションの結果が個別に完全に保存される。
+
+セッションごとに独立した `event_queue` を使う理由: 全セッション共有の
+単一キューにすると、あるジョブの `stop()` 実行 (結果put) が別セッションの
+`SttEventRelay` の読み出しと重なった場合に、結果を取り違えるリスクがある。
+セッションごとにキューを分離することで、処理タイミングがどれだけずれても
+取り違えは起きない。
+
+ワーカーを意図的に1本のみに限定している理由: 並列化すると文字起こしの
+完了順が録音開始順から崩れる可能性があり、ブラウザの表示キュー
+(`sessionQueue`、「セッション管理」章参照) がFIFO順に完了を待つ設計の
+前提を満たせなくなるため。
+
+既知の制約 (設計上受け入れているもの):
+
+- **体感遅延**: 直列処理のため、キューに複数ジョブが滞留していると、
+  後続ジョブは先行ジョブの処理完了 (最大 `mai_timeout_sec`秒、
+  デフォルト60秒) を待ってから処理が始まる。ブラウザの表示キューも
+  同様に、先頭セッションが確定するまで後続セッションの内容を表示しない。
+- **メモリ**: 録音を連投するとジョブがキューに滞留し、その分のPCM
+  バッファ (`MaiTranscribeClient._buffer`) がメモリに残る。滞留数の
+  上限は設けない。
+- **UI**: キュー内に複数ジョブが滞留していても件数表示等は行わない。
+
 ## 技術スタック
 
 | レイヤー | 技術 |
@@ -300,7 +391,14 @@ Containerから取得したインスタンスを `app.state` に明示的に代�
 
 ## 将来課題
 
-- 文字起こし中に次の録音を受け付けてキューイングする機能。現在は
-  `SessionManager` が `asyncio.Lock` で `start_session`/`stop_session` を
-  排他しており、`stop_session` 内の STT 完了待ちの間は次の録音を開始
-  できない (待機はするが即座には始まらない)
+- 文字起こし中に次の録音を受け付けてキューイングする機能は
+  `TranscriptionQueue` により解消済み (「文字起こしキュー」章参照)。
+  `RecordingSessionService.stop_session()` は文字起こし完了を待たずに
+  即座に返り、次の `start_session()` をすぐに受け付けられる
+- 複数セッションが同時に文字起こし完了待ちになる場合の混線
+  (クリップボード/履歴の上書き、textareaでの内容混在) は `session_id`
+  によるセッション分離と `pending_sessions` のコレクション化、
+  ブラウザ側の表示キュー (`sessionQueue`) により解消済み (「セッション管理」
+  「文字起こしキュー」章参照)
+- キューは無制限長で、滞留数の上限や録音開始の抑制は行わない
+  (「文字起こしキュー」章の既知の制約を参照)

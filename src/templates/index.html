@@ -112,7 +112,6 @@ async function shutdownServer() {
 }
 
 // --- SSE ---
-let sessionActive = false;
 let serverShuttingDown = false;
 
 function escapeHtml(text) {
@@ -146,14 +145,69 @@ function updateEditorInterim(text) {
   }
 }
 
-async function finalizeSession() {
+// --- セッションごとの表示キュー ---
+// 各要素: { id: string, text: string, ended: boolean }
+// 先頭 (sessionQueue[0]) のセッションのみtextarea/interimに表示し、
+// 完了順に1件ずつ自動確定 (校正→finalize-session) する。
+// これにより異なるセッションの文字起こし結果がtextarea上で混在しない。
+// textareaは「表示中セッションが切り替わる (=次の録音が始まる) 瞬間」にのみ
+// クリアする。finalize直後にクリアすると、確定直後のテキストが一瞬しか
+// 見えずに消えてしまうため、確定後もそのセッションの内容を表示し続ける。
+let sessionQueue = [];
+let finalizing = false;
+let displayedSessionId = null;
+
+function getOrCreateSession(id) {
+  let session = sessionQueue.find(s => s.id === id);
+  if (!session) {
+    session = { id, text: '', ended: false };
+    sessionQueue.push(session);
+  }
+  return session;
+}
+
+function ensureDisplaying(session) {
+  if (displayedSessionId === session.id) return;
+  displayedSessionId = session.id;
+  document.getElementById('editor-textarea').value = session.text;
+  updateEditorInterim('');
+}
+
+async function tryAdvanceQueue() {
+  if (finalizing || sessionQueue.length === 0) return;
+  const front = sessionQueue[0];
+  ensureDisplaying(front);
+
+  if (!front.ended) return;
+
+  finalizing = true;
   const textarea = document.getElementById('editor-textarea');
-  const text = textarea.value;
+  if (isProofreadEnabled() && front.text.trim()) {
+    updateEditorInterim('校正中...');
+    try {
+      const res = await fetch('/api/proofread', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: front.text }),
+      });
+      const data = await res.json();
+      textarea.value = data.text;
+      front.text = data.text;
+    } catch {
+      // 校正失敗時は元テキストのまま
+    }
+    updateEditorInterim('');
+  }
+
   await fetch('/api/finalize-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ session_id: front.id, text: textarea.value }),
   });
+
+  sessionQueue.shift();
+  finalizing = false;
+  tryAdvanceQueue(); // 次のセッションが既にended済みなら連続処理
 }
 
 function connectSSE() {
@@ -161,60 +215,49 @@ function connectSSE() {
 
   evtSource.addEventListener('interim', (e) => {
     const data = JSON.parse(e.data);
-    updateEditorInterim(data.text);
+    if (sessionQueue.length > 0 && sessionQueue[0].id === data.session_id) {
+      updateEditorInterim(data.text);
+    }
   });
 
   evtSource.addEventListener('recognized', (e) => {
     const data = JSON.parse(e.data);
-    appendToTextarea(data.text);
-    updateEditorInterim('');
+    const session = getOrCreateSession(data.session_id);
+    session.text += data.text;
+    if (sessionQueue[0].id === session.id) {
+      appendToTextarea(data.text);
+      updateEditorInterim('');
+    }
   });
 
   evtSource.addEventListener('processing', (e) => {
     const data = JSON.parse(e.data);
-    updateEditorInterim(data.message || '文字起こし中...');
+    if (sessionQueue.length > 0 && sessionQueue[0].id === data.session_id) {
+      updateEditorInterim(data.message || '文字起こし中...');
+    }
   });
 
-  evtSource.addEventListener('processing_done', () => {
-    updateEditorInterim('');
+  evtSource.addEventListener('processing_done', (e) => {
+    const data = JSON.parse(e.data);
+    if (sessionQueue.length > 0 && sessionQueue[0].id === data.session_id) {
+      updateEditorInterim('');
+    }
   });
 
   evtSource.addEventListener('status', (e) => {
     const data = JSON.parse(e.data);
     updateRecordingUI(data.recording);
-    if (data.recording && !sessionActive) {
-      // 新セッション開始 → 表示リセット
-      document.getElementById('editor-textarea').value = '';
-      updateEditorInterim('');
-      sessionActive = true;
-    }
-    if (!data.recording) {
-      sessionActive = false;
+    if (data.recording) {
+      getOrCreateSession(data.session_id);
+      tryAdvanceQueue(); // 新セッションがキュー先頭なら、直ちに表示を切り替える
     }
   });
 
-  evtSource.addEventListener('session_end', async (e) => {
-    updateEditorInterim('');
-    if (isProofreadEnabled()) {
-      const textarea = document.getElementById('editor-textarea');
-      const text = textarea.value;
-      if (text.trim()) {
-        updateEditorInterim('校正中...');
-        try {
-          const res = await fetch('/api/proofread', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-          });
-          const data = await res.json();
-          textarea.value = data.text;
-        } catch {
-          // 校正失敗時は元テキストのまま
-        }
-        updateEditorInterim('');
-      }
-    }
-    finalizeSession();
+  evtSource.addEventListener('session_end', (e) => {
+    const data = JSON.parse(e.data);
+    const session = getOrCreateSession(data.session_id);
+    session.ended = true;
+    tryAdvanceQueue();
   });
 
   evtSource.addEventListener('error', (e) => {
