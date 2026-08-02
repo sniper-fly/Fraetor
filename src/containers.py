@@ -13,7 +13,9 @@ from src.dictation.application.audio_pipeline_coordinator import (
 from src.dictation.application.recording_session_service import (
     RecordingSessionService,
 )
+from src.dictation.application.segment_accumulator import SegmentAccumulator
 from src.dictation.application.stt_event_relay import SttEventRelay
+from src.dictation.application.transcription_queue import TranscriptionQueue
 from src.dictation.infrastructure.audio.factory import create_audio_capture
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 from src.dictation.infrastructure.stt.factory import create_stt_engine
@@ -101,7 +103,6 @@ class Container(containers.DeclarativeContainer):
 
     stt_engine_factory = providers.Factory(
         create_stt_engine,
-        stt_event_queue=app_state.provided.stt_event_queue,
         endpoint=secrets.provided.mai_endpoint,
         api_key=secrets.provided.mai_api_key,
         locale=settings.provided.mai_locale,
@@ -123,13 +124,24 @@ class Container(containers.DeclarativeContainer):
         vad_factory=vad_factory,
     )
 
-    stt_event_relay = providers.Singleton(SttEventRelay, app_state=app_state)
+    segment_accumulator = providers.Singleton(
+        SegmentAccumulator, broadcaster=broadcaster
+    )
+
+    stt_event_relay = providers.Singleton(
+        SttEventRelay, app_state=app_state, accumulator=segment_accumulator
+    )
+
+    transcription_queue = providers.Singleton(
+        TranscriptionQueue, app_state=app_state, accumulator=segment_accumulator
+    )
 
     recording_session_service = providers.Singleton(
         RecordingSessionService,
         app_state=app_state,
         audio_pipeline=audio_pipeline_coordinator,
         event_relay=stt_event_relay,
+        transcription_queue=transcription_queue,
         max_session_duration_sec=settings.provided.max_session_duration_sec,
         silence_timeout_sec=settings.provided.silence_timeout_sec,
     )

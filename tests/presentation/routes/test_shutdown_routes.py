@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
+from src.dictation.application.app_state import AppState
+from src.dictation.application.segment_accumulator import SegmentAccumulator
+from src.dictation.application.transcription_queue import TranscriptionQueue
+from src.dictation.domain.models import RecordingSession, TranscriptionJob
+from src.dictation.domain.ports import SttCapabilities, SttEnginePort
+from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
+from src.presentation.routes.shutdown_routes import shutdown as shutdown_handler
+
 if TYPE_CHECKING:
     from starlette.testclient import TestClient
-
-    from src.dictation.application.app_state import AppState
 
 
 class TestShutdown:
@@ -48,3 +56,62 @@ class TestShutdown:
         mock_shutdowner.schedule.assert_called_once_with(
             client.app.state.shutdown_delay_sec  # type: ignore[attr-defined]
         )
+
+
+class TestShutdownWaitsForTranscriptionQueue:
+    async def test_session_end_broadcasts_before_shutdown_when_job_pending(
+        self,
+    ) -> None:
+        """キューに処理中のジョブがある状態でshutdownしても、
+        session_end (履歴保存の前提) がshutdownより先に配信される。
+
+        TestClientは別スレッド/別イベントループでアプリを実行するため、
+        transcription_queue の内部Queueとテストのイベントループが異なると
+        クロスループエラーになる。ここでは同一イベントループ上で
+        AppState/TranscriptionQueue を直接組み立て、ハンドラを直接呼ぶ。
+        """
+        broadcaster = SSEBroadcaster()
+        app_state = AppState(broadcaster=broadcaster)
+        accumulator = SegmentAccumulator(broadcaster)
+        transcription_queue = TranscriptionQueue(app_state, accumulator)
+        transcription_queue.start()
+        sub = broadcaster.subscribe()
+
+        mock_stt = MagicMock(spec=SttEnginePort)
+
+        async def slow_stop() -> None:
+            await asyncio.sleep(0.1)
+
+        mock_stt.stop = slow_stop
+        mock_stt.capabilities = SttCapabilities(streaming=False, post_processing=True)
+        session = RecordingSession(
+            id="pending-session", segments=[], started_at=datetime.now(tz=UTC)
+        )
+        job = TranscriptionJob(
+            session=session,
+            stt_client=mock_stt,
+            event_queue=asyncio.Queue(),
+            timed_out=False,
+        )
+        await transcription_queue.enqueue(job)
+
+        request = MagicMock()
+        request.app.state.app_state = app_state
+        request.app.state.recording_session_service = AsyncMock()
+        request.app.state.transcription_queue = transcription_queue
+        request.app.state.mai_timeout_sec = 1
+        request.app.state.shutdowner = MagicMock()
+        request.app.state.shutdown_delay_sec = 0.5
+
+        response = await shutdown_handler(request)
+
+        assert response == {"ok": True}
+        messages = []
+        while not sub.empty():
+            messages.append(sub.get_nowait())
+        events = [m["event"] for m in messages]
+        assert "session_end" in events
+        assert "shutdown" in events
+        assert events.index("session_end") < events.index("shutdown")
+
+        await transcription_queue.shutdown(timeout=1)

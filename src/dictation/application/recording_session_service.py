@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.dictation.application.session_timeout_monitor import SessionTimeoutMonitor
-from src.dictation.domain.models import RecordingSession
-from src.transcript_history.domain.models import FinalizedSession
+from src.dictation.domain.models import RecordingSession, TranscriptionJob
 
 if TYPE_CHECKING:
     from src.dictation.application.app_state import AppState
@@ -16,15 +15,19 @@ if TYPE_CHECKING:
         AudioPipelineCoordinator,
     )
     from src.dictation.application.stt_event_relay import SttEventRelay
+    from src.dictation.application.transcription_queue import TranscriptionQueue
 
 logger = logging.getLogger(__name__)
 
 
 class RecordingSessionService:
-    """セッションのライフサイクルを管理する最上位Facade。
+    """録音 (マイク) のライフサイクルを管理する最上位Facade。
 
-    `AudioPipelineCoordinator` (STT/VAD制御) と `SttEventRelay` (イベント処理)
-    を組み立て、`SessionTimeoutMonitor` によるタイムアウト自動停止を仕込む。
+    `AudioPipelineCoordinator` (STT/VAD制御) と `SttEventRelay` (リアルタイム
+    イベント処理) を組み立て、`SessionTimeoutMonitor` によるタイムアウト自動
+    停止を仕込む。文字起こし本体 (STT の stop() 呼び出し) は `stop_session()`
+    内では実行せず、`TranscriptionQueue` にジョブとして委譲して即座に返る。
+    これにより文字起こし処理中でも次の `start_session()` をすぐに開始できる。
     """
 
     def __init__(
@@ -32,6 +35,7 @@ class RecordingSessionService:
         app_state: AppState,
         audio_pipeline: AudioPipelineCoordinator,
         event_relay: SttEventRelay,
+        transcription_queue: TranscriptionQueue,
         *,
         max_session_duration_sec: float,
         silence_timeout_sec: float,
@@ -39,6 +43,7 @@ class RecordingSessionService:
         self._app_state = app_state
         self._audio_pipeline = audio_pipeline
         self._event_relay = event_relay
+        self._transcription_queue = transcription_queue
         self._max_session_duration_sec = max_session_duration_sec
         self._silence_timeout_sec = silence_timeout_sec
         self._lock = asyncio.Lock()
@@ -57,7 +62,6 @@ class RecordingSessionService:
             )
             self._app_state.current_session = session
             self._app_state.recording = True
-            self._event_relay.reset()
 
             try:
                 await self._audio_pipeline.start()
@@ -66,7 +70,11 @@ class RecordingSessionService:
                 await self._abort_session_start()
                 return
 
-            self._event_relay.start()
+            event_queue = self._audio_pipeline.event_queue
+            if event_queue is None:
+                msg = "audio_pipeline.start() succeeded but event_queue is None"
+                raise RuntimeError(msg)
+            self._event_relay.start(event_queue)
             self._timeout_monitor = SessionTimeoutMonitor(
                 max_duration_sec=self._max_session_duration_sec,
                 silence_timeout_sec=self._silence_timeout_sec,
@@ -75,7 +83,9 @@ class RecordingSessionService:
             )
             self._timeout_monitor.start()
 
-            await self._app_state.broadcaster.broadcast("status", {"recording": True})
+            await self._app_state.broadcaster.broadcast(
+                "status", {"recording": True, "session_id": session.id}
+            )
             logger.info("Session started: %s", session.id)
 
     async def _abort_session_start(self) -> None:
@@ -86,11 +96,16 @@ class RecordingSessionService:
             "error", {"message": "セッション開始に失敗しました。"}
         )
 
-    async def stop_session(self, *, timed_out: bool = False) -> FinalizedSession | None:
-        """セッションを停止し、確定済みセッションを返す。"""
+    async def stop_session(self, *, timed_out: bool = False) -> None:
+        """録音を停止し、文字起こしジョブをキューに投入する。
+
+        文字起こし完了 (STTの `stop()`) を待たずに即座に返る。処理完了後の
+        `session_end` 配信や `pending_session` 更新は `TranscriptionQueue`
+        が担う。
+        """
         async with self._lock:
             if not self._app_state.recording:
-                return None
+                return
 
             self._app_state.recording = False
 
@@ -98,42 +113,32 @@ class RecordingSessionService:
                 await self._timeout_monitor.stop()
                 self._timeout_monitor = None
 
-            post_processing = await self._audio_pipeline.stop()
+            await self._event_relay.stop()
 
-            if post_processing:
-                await self._app_state.broadcaster.broadcast(
-                    "processing", {"message": "文字起こし中..."}
-                )
-
-            await self._event_relay.stop_and_drain()
-
-            if post_processing:
-                await self._app_state.broadcaster.broadcast("processing_done", {})
+            stopped = await self._audio_pipeline.stop()
 
             recording_session = self._app_state.current_session
-            finalized: FinalizedSession | None = None
-            if recording_session:
-                finalized = FinalizedSession.from_recording(
-                    recording_session,
-                    ended_at=datetime.now(tz=UTC),
-                    timed_out=timed_out,
-                )
-                self._app_state.pending_session = finalized
-
             self._app_state.current_session = None
 
-            await self._app_state.broadcaster.broadcast("session_end", {})
-            await self._app_state.broadcaster.broadcast("status", {"recording": False})
-
-            if finalized:
-                logger.info(
-                    "Session ended: %s (timed_out=%s, segments=%d)",
-                    finalized.id,
-                    timed_out,
-                    len(finalized.segments),
+            if stopped is not None and recording_session is not None:
+                stt_client, event_queue = stopped
+                await self._transcription_queue.enqueue(
+                    TranscriptionJob(
+                        session=recording_session,
+                        stt_client=stt_client,
+                        event_queue=event_queue,
+                        timed_out=timed_out,
+                    )
                 )
 
-            return finalized
+            await self._app_state.broadcaster.broadcast("status", {"recording": False})
+
+            if recording_session:
+                logger.info(
+                    "Session stopped: %s (timed_out=%s)",
+                    recording_session.id,
+                    timed_out,
+                )
 
     async def _on_timeout(self) -> None:
         await self.stop_session(timed_out=True)

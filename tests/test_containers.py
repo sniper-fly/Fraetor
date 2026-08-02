@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from src.containers import Container
@@ -74,11 +75,15 @@ class TestContainer:
         assert container.proofreader() is None
 
     def test_stt_engine_factory_creates_new_instance_each_call(self) -> None:
-        """delegationで取得したFactoryを呼ぶたびに新規インスタンスを生成する。"""
+        """delegationで取得したFactoryを呼ぶたびに新規インスタンスを生成する。
+
+        セッションごとに独立したイベントキューを渡せるよう、
+        stt_event_queue は呼び出し時の引数として渡す。
+        """
         container = Container()
         factory = container.stt_engine_factory()
 
-        first = factory()  # type: ignore[operator]
-        second = factory()  # type: ignore[operator]
+        first = factory(asyncio.Queue())  # type: ignore[operator]
+        second = factory(asyncio.Queue())  # type: ignore[operator]
 
         assert first is not second

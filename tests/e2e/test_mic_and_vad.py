@@ -81,10 +81,13 @@ class TestFileAudioAndVad:
 
         events = await _run_session(base_url)
 
-        status_events = [e for e in events if e["event"] == "status"]
-        # 開始時の status(recording=True) 以外に途中停止の status(recording=False) が
-        # 挟まっていないこと (短いポーズでタイムアウトしていない証跡)
-        assert len(status_events) == 1
+        status_events = [
+            json.loads(e["data"])["recording"] for e in events if e["event"] == "status"
+        ]
+        # status(true) の後に status(false) が1回だけ続くこと。
+        # 途中で誤って追加の停止/開始が挟まっていれば3件以上になる
+        # (短いポーズでタイムアウトしていない証跡)。
+        assert status_events == [True, False]
         _print_recognized("02_multiple_utterances.wav", events)
 
     async def test_short_utterance_is_recognized(

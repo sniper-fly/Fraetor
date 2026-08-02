@@ -33,7 +33,7 @@ class TestStart:
         """STT 接続 → マイクキャプチャ開始"""
         mock_stt, mock_vad, mock_audio = _setup_mocks()
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
 
         await coordinator.start()
@@ -41,11 +41,22 @@ class TestStart:
         mock_stt.start.assert_called_once()
         mock_audio.start_recording.assert_awaited_once_with(coordinator._on_audio_chunk)
 
+    async def test_creates_dedicated_event_queue(self) -> None:
+        """開始のたびにセッション専用のasyncio.Queueが生成される"""
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        coordinator = AudioPipelineCoordinator(
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
+        )
+
+        await coordinator.start()
+
+        assert coordinator.event_queue is not None
+
     async def test_audio_chunk_forwarded_to_stt_and_vad(self) -> None:
         """録音コールバックのPCMチャンクがSTTとVAD両方に転送される"""
         mock_stt, mock_vad, mock_audio = _setup_mocks()
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
         await coordinator.start()
 
@@ -59,13 +70,14 @@ class TestStart:
         mock_stt, mock_vad, mock_audio = _setup_mocks()
         mock_stt.start = AsyncMock(side_effect=RuntimeError("Auth failed"))
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
 
         with contextlib.suppress(RuntimeError):
             await coordinator.start()
 
         assert coordinator.stt_client is None
+        assert coordinator.event_queue is None
 
     async def test_audio_open_failure_stops_stt_and_propagates(self) -> None:
         """ストリームを開けない場合はSTTを停止し例外を伝播する"""
@@ -74,7 +86,7 @@ class TestStart:
             side_effect=RuntimeError("No audio device")
         )
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
 
         with contextlib.suppress(RuntimeError):
@@ -82,44 +94,37 @@ class TestStart:
 
         mock_stt.stop.assert_called_once()
         assert coordinator.stt_client is None
+        assert coordinator.event_queue is None
 
 
 class TestStop:
-    async def test_stops_recording_and_stt(self) -> None:
+    async def test_stops_recording_only_and_returns_ownership(self) -> None:
+        """録音停止のみ行い、STT自体は停止せず所有権を呼び出し元に返す"""
         mock_stt, mock_vad, mock_audio = _setup_mocks()
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
         await coordinator.start()
 
-        await coordinator.stop()
+        result = await coordinator.stop()
 
         mock_audio.stop_recording.assert_awaited_once()
-        mock_stt.stop.assert_called_once()
+        mock_stt.stop.assert_not_called()
         assert coordinator.stt_client is None
+        assert coordinator.event_queue is None
+        assert result is not None
+        stt_client, _event_queue = result
+        assert stt_client is mock_stt
 
-    async def test_returns_post_processing_flag_from_capabilities(self) -> None:
-        _, mock_vad, mock_audio = _setup_mocks(post_processing=True)
-        mock_stt, _, _ = _setup_mocks(post_processing=True)
+    async def test_returns_none_when_not_started(self) -> None:
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
-        await coordinator.start()
 
-        post_processing = await coordinator.stop()
+        result = await coordinator.stop()
 
-        assert post_processing is True
-
-    async def test_streaming_engine_returns_false_post_processing(self) -> None:
-        mock_stt, mock_vad, mock_audio = _setup_mocks(post_processing=False)
-        coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
-        )
-        await coordinator.start()
-
-        post_processing = await coordinator.stop()
-
-        assert post_processing is False
+        assert result is None
 
 
 class TestLastSpeechTime:
@@ -127,7 +132,7 @@ class TestLastSpeechTime:
         _, mock_vad, mock_audio = _setup_mocks()
         mock_stt, _, _ = _setup_mocks()
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
 
         assert coordinator.last_speech_time() > 0
@@ -136,7 +141,7 @@ class TestLastSpeechTime:
         mock_stt, mock_vad, mock_audio = _setup_mocks()
         mock_vad.last_speech_time = 12345.0
         coordinator = AudioPipelineCoordinator(
-            mock_audio, lambda: mock_stt, lambda: mock_vad
+            mock_audio, lambda _q: mock_stt, lambda: mock_vad
         )
         await coordinator.start()
 
