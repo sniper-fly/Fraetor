@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import subprocess
 import sys
@@ -135,6 +136,22 @@ class AudioServerHandle:
             module="tests.e2e.e2e_entrypoint",
         )
         return _SERVER_URL
+
+    def switch_audio(self, wav_filename: str) -> None:
+        """同一プロセス内で、次回録音時に読み込むWAVファイルを切り替える。
+
+        異なる発話内容のセッションを1プロセス内で連続して発生させ、
+        session_id の取り違えを検証するテスト専用の操作
+        (`tests/e2e/e2e_entrypoint.py` のテスト専用エンドポイント経由)。
+        """
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"{_SERVER_URL}/api/_test/switch-audio",
+                data=json.dumps({"wav_filename": wav_filename}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+        )
 
 
 @pytest.fixture

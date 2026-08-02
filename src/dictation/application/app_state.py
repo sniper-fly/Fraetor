@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,8 +10,16 @@ if TYPE_CHECKING:
 
 class AppState:
     def __init__(self, broadcaster: EventBroadcasterPort) -> None:
-        self.stt_event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
         self.broadcaster: EventBroadcasterPort = broadcaster
         self.current_session: RecordingSession | None = None
         self.recording: bool = False
-        self.pending_session: FinalizedSession | None = None
+        self.pending_sessions: list[FinalizedSession] = []
+
+    def add_pending_session(self, session: FinalizedSession) -> None:
+        self.pending_sessions.append(session)
+
+    def pop_pending_session(self, session_id: str) -> FinalizedSession | None:
+        for i, session in enumerate(self.pending_sessions):
+            if session.id == session_id:
+                return self.pending_sessions.pop(i)
+        return None

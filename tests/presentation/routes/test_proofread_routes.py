@@ -13,9 +13,9 @@ if TYPE_CHECKING:
     from src.dictation.application.app_state import AppState
 
 
-def _make_pending_session() -> FinalizedSession:
+def _make_pending_session(session_id: str = "pending-session-id") -> FinalizedSession:
     return FinalizedSession(
-        id="pending-session-id",
+        id=session_id,
         segments=[Segment(id=0, text="校正済み。")],
         started_at=datetime(2026, 4, 4, 14, 28, 0, tzinfo=UTC),
         ended_at=datetime(2026, 4, 4, 14, 28, 15, tzinfo=UTC),
@@ -50,18 +50,18 @@ class TestFinalizeSession:
     def test_calls_use_case_and_clears_pending(self, client: TestClient) -> None:
         app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
         pending = _make_pending_session()
-        app_state.pending_session = pending
+        app_state.add_pending_session(pending)
         mock_use_case = AsyncMock()
         client.app.state.finalize_session_use_case = mock_use_case  # type: ignore[attr-defined]
 
         response = client.post(
             "/api/finalize-session",
-            json={"text": "edited text"},
+            json={"session_id": pending.id, "text": "edited text"},
         )
 
         assert response.json() == {"ok": True}
         mock_use_case.execute.assert_called_once_with(pending, text="edited text")
-        assert app_state.pending_session is None
+        assert app_state.pending_sessions == []
 
     def test_returns_false_when_no_pending(self, client: TestClient) -> None:
         mock_use_case = AsyncMock()
@@ -69,7 +69,29 @@ class TestFinalizeSession:
 
         response = client.post(
             "/api/finalize-session",
-            json={"text": "some text"},
+            json={"session_id": "unknown-id", "text": "some text"},
         )
         assert response.json() == {"ok": False}
         mock_use_case.execute.assert_not_called()
+
+
+class TestFinalizeSessionWithMultiplePending:
+    def test_finalizes_only_specified_session_id(self, client: TestClient) -> None:
+        """複数セッションが同時に確定待ちの状態でも、指定したsession_idのみが
+        確定され、他のpending_sessionsに影響しない (取り違え防止の回帰テスト)。"""
+        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
+        first = _make_pending_session("first")
+        second = _make_pending_session("second")
+        app_state.add_pending_session(first)
+        app_state.add_pending_session(second)
+        mock_use_case = AsyncMock()
+        client.app.state.finalize_session_use_case = mock_use_case  # type: ignore[attr-defined]
+
+        response = client.post(
+            "/api/finalize-session",
+            json={"session_id": "second", "text": "second text"},
+        )
+
+        assert response.json() == {"ok": True}
+        mock_use_case.execute.assert_called_once_with(second, text="second text")
+        assert [s.id for s in app_state.pending_sessions] == ["first"]

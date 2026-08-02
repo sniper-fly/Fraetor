@@ -13,9 +13,22 @@ from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
+from fastapi import APIRouter, Request
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _ENV_AUDIO_FILE = "FRAETOR_AUDIO_FILE"
+_AUDIO_DIR = Path(__file__).parent / "fixtures" / "audio"
+
+_test_router = APIRouter()
+
+
+@_test_router.post("/api/_test/switch-audio")
+async def switch_audio(request: Request) -> dict[str, bool]:
+    """次回録音で読み込むWAVファイルを切り替える (E2E専用、本番には存在しない)。"""
+    body = await request.json()
+    wav_filename = body["wav_filename"]
+    request.app.state.file_audio_capture.set_wav_path(_AUDIO_DIR / wav_filename)
+    return {"ok": True}
 
 
 def main() -> None:
@@ -33,11 +46,12 @@ def main() -> None:
     from src.presentation.app import create_app  # noqa: PLC0415
 
     settings = Container().settings()
-    app = create_app(
-        audio_capture=FileAudioCapture(
-            Path(wav_path_str), sample_rate=settings.stt_sample_rate
-        )
+    audio_capture = FileAudioCapture(
+        Path(wav_path_str), sample_rate=settings.stt_sample_rate
     )
+    app = create_app(audio_capture=audio_capture)
+    app.state.file_audio_capture = audio_capture
+    app.include_router(_test_router)
     uvicorn.run(app, host=settings.server_host, port=settings.server_port)
 
 

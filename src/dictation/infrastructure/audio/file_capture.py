@@ -43,6 +43,14 @@ class FileAudioCapture(SounddeviceCaptureBase):
         self._task = asyncio.create_task(self._play())
         logger.info("File audio capture started (path=%s)", self._wav_path)
 
+    def set_wav_path(self, wav_path: Path) -> None:
+        """次回の start_recording() で読み込む WAV ファイルを切り替える。
+
+        E2E テストが同一サーバープロセス内で異なる発話内容のセッションを
+        連続して作るために使う (本番コードパスからは呼ばれない)。
+        """
+        self._wav_path = wav_path
+
     async def stop_recording(self) -> None:
         if self._task is not None:
             self._task.cancel()

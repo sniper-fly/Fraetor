@@ -8,4 +8,5 @@ class ProofreadRequest(BaseModel):
 
 
 class FinalizeSessionRequest(BaseModel):
+    session_id: str
     text: str
