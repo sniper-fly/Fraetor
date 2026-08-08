@@ -40,6 +40,15 @@ if [ $MYPY_STATUS -ne 0 ]; then
 fi
 
 
+# import-linter (依存方向の検証)
+IMPORTLINTER_OUTPUT=$(uv run lint-imports 2>&1)
+IMPORTLINTER_STATUS=$?
+if [ $IMPORTLINTER_STATUS -ne 0 ]; then
+    ERRORS="${ERRORS}[import-linter error]\n${IMPORTLINTER_OUTPUT}\n\n"
+    EXIT_STATUS=2
+fi
+
+
 # pytest (コンパクト出力: 短縮トレースバック、ヘッダー省略)
 PYTEST_OUTPUT=$(uv run pytest --tb=short --no-header -q 2>&1)
 PYTEST_STATUS=$?

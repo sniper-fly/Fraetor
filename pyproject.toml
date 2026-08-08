@@ -106,10 +106,80 @@ norecursedirs = ["tests/e2e"]
 asyncio_mode = "auto"
 timeout = 10
 
+[tool.importlinter]
+root_package = "src"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "境界づけられたコンテキスト内の層依存方向"
+type = "layers"
+layers = [
+    "infrastructure | application",
+    "domain",
+]
+containers = [
+    "src.dictation",
+    "src.transcript_history",
+    "src.proofreading",
+]
+exhaustive = true
+
+[[tool.importlinter.contracts]]
+name = "PresentationはInfrastructure具象を直接importしない"
+type = "forbidden"
+source_modules = [
+    "src.presentation",
+]
+forbidden_modules = [
+    "src.dictation.infrastructure",
+    "src.transcript_history.infrastructure",
+    "src.proofreading.infrastructure",
+    "src.shared.process.signal_process_shutdowner",
+]
+ignore_imports = [
+    "src.presentation.app -> src.containers",
+]
+
+[[tool.importlinter.contracts]]
+name = "ドメイン層はPresentationに依存しない"
+type = "forbidden"
+source_modules = [
+    "src.dictation",
+    "src.transcript_history",
+    "src.proofreading",
+    "src.shared",
+]
+forbidden_modules = [
+    "src.presentation",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain層はサードパーティSDKに依存しない"
+type = "forbidden"
+source_modules = [
+    "src.dictation.domain",
+    "src.transcript_history.domain",
+    "src.proofreading.domain",
+]
+forbidden_modules = [
+    "azure",
+    "boto3",
+    "google",
+    "sounddevice",
+    "torch",
+    "torchaudio",
+    "silero_vad",
+    "pyperclip",
+    "dependency_injector",
+    "fastapi",
+    "sse_starlette",
+]
+
 [dependency-groups]
 dev = [
     "boto3-stubs[ssm]>=1.42.96",
     "httpx>=0.28.1",
+    "import-linter>=2.13",
     "moto[ssm]>=5.2.2",
     "mypy>=1.19.1",
     "playwright>=1.61.0",

@@ -299,7 +299,9 @@ presentation/           # FastAPIルート・スキーマ (HTTP変換のみ)
 (逆方向のimportは禁止)。Domain層はPydantic以外のサードパーティSDKに依存しない。
 外部依存 (STT/Audio/Proofreading/履歴永続化/クリップボード/SSE配信/プロセス
 制御) はすべて対応モジュールの `domain/ports.py` にポート (ABC) を定義し、
-`infrastructure/` 配下が実装する。
+`infrastructure/` 配下が実装する。この依存方向は `import-linter`
+(`pyproject.toml` の `[tool.importlinter]`) により機械的に検証しており、
+`uv run lint-imports` が `check_code_quality.sh` の一部として実行される。
 
 DIコンテナ (`dependency-injector`) を `src/containers.py` の `Container` に
 一元化する。FastAPIルートへの `@inject`/`Provide[]` wiring は mypy strict
