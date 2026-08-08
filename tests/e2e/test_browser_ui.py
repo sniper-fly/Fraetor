@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     from playwright.sync_api import Page
 
+    from tests.e2e.conftest import AudioServerHandle
+
 _UI_WAIT_MS = 30_000  # Playwright の待機はミリ秒単位
 _SESSION_END_WAIT_SEC = 30.0
 
@@ -133,11 +135,12 @@ class TestBrowserUi:
         assert page.evaluate("window.__clipboardWrites") == [expected_text]
 
     def test_two_consecutive_recordings_do_not_mix_in_textarea(
-        self, page: Page, fraetor_server_with_audio: Callable[[str], str]
+        self, page: Page, fraetor_audio_server_handle: AudioServerHandle
     ) -> None:
-        """正常系: 録音A→確定完了→録音Bと直列で行った場合、
+        """正常系: 録音A→確定完了→(異なる発話内容の)録音Bと直列で行った場合、
         (1) 確定 (finalize-session) 完了後もAの内容がtextareaに残り続け、
-        (2) 次の録音B開始時に初めてtextareaがクリアされ、
+        (2) 録音Bを開始してもトグル直後はまだtextareaがクリアされず、
+            Bの文言が最初に確定した瞬間に初めてtextareaがクリアされ、
         (3) Bのtextareaの内容にAの文字列が混入しない
         ことを検証する (textareaの継ぎ足しバグ・過早クリアバグの回帰テスト)。
 
@@ -154,6 +157,11 @@ class TestBrowserUi:
         が確定処理を終える際に必ず変化する `sessionQueue.length === 0`
         (キューからの除去はfinalize完了後、次のクリア候補の代入より前に
         同期的に実行される) を完了シグナルとして待つ。
+
+        A/Bには異なる音声ファイルを使う (`switch_audio`)。同一ファイルだと
+        認識結果の文字列が一致し得るため、「textareaの値がAと異なる状態に
+        なった」というブラックボックスな観測でクリア完了を判定できず、
+        実装内部の状態変数を覗く必要が生じてしまう。
         """
         page.add_init_script(
             """
@@ -174,7 +182,7 @@ class TestBrowserUi:
             });
             """
         )
-        base_url = fraetor_server_with_audio("04_short_utterance.wav")
+        base_url = fraetor_audio_server_handle.start("04_short_utterance.wav")
         page.goto(base_url)
 
         # 録音A: トグルON→(無音タイムアウトより先に)OFF
@@ -216,15 +224,27 @@ class TestBrowserUi:
             " (次の録音が始まる前に消えるバグ)"
         )
 
-        # 録音B: 同じ音声を再度録音し、Aの文字列が残っていないことを確認する
+        # 録音B: Aとは異なる発話内容の音声に切り替えて録音する
+        fraetor_audio_server_handle.switch_audio("01_normal_speech.wav")
         page.evaluate("fetch('/api/toggle-recording', {method: 'POST'})")
         page.wait_for_function(
             "document.getElementById('rec-label').textContent === '録音中'",
             timeout=_UI_WAIT_MS,
         )
-        # 録音B開始時に初めてtextareaがクリアされ、Aの内容が消えるべき。
+        # 録音Bのトグル直後はまだ何も確定していないため、textareaはAの内容を
+        # 保持したままであるべき (録音ボタン押下即クリアの回帰防止)。
+        assert (
+            page.locator("#editor-textarea").input_value().strip()
+            == text_after_a.strip()
+        )
+
+        # Bの文言が最初に確定した時点で初めてtextareaがクリア→Bの内容に
+        # 置き換わる。A/Bは異なる音声ファイルのため文字列は異なる。
+        text_after_a_json = json.dumps(text_after_a)
         page.wait_for_function(
-            "document.getElementById('editor-textarea').value === ''",
+            "document.getElementById('editor-textarea').value.length > 0"
+            " && document.getElementById('editor-textarea').value"
+            f" !== {text_after_a_json}",
             timeout=_UI_WAIT_MS,
         )
         page.wait_for_timeout(2000)
@@ -241,10 +261,8 @@ class TestBrowserUi:
         text_after_b = page.locator("#editor-textarea").input_value()
 
         assert text_after_b.strip(), "録音Bの結果が表示されなかった"
-        # Bの内容はAの内容を「含んでいない」(継ぎ足しが起きていない) ことを確認する。
-        # 同一音声ファイルのため認識結果は概ね同一だが、Aの文字列がBの前方に
-        # 重複して残っていれば len が異常に長くなる/文字列が2回出現するため検出できる
-        assert text_after_b.count(text_after_a.strip()[:5]) <= 1, (
+        # Bの内容にAの文字列が「継ぎ足されていない」ことを確認する。
+        assert text_after_a.strip()[:5] not in text_after_b, (
             "textareaに前セッションの内容が継ぎ足されている"
         )
 

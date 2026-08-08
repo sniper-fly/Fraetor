@@ -189,13 +189,15 @@ function updateEditorInterim(text) {
 }
 
 // --- セッションごとの表示キュー ---
-// 各要素: { id: string, text: string, ended: boolean }
+// 各要素: { id: string, text: string, ended: boolean, needsClear: boolean }
 // 先頭 (sessionQueue[0]) のセッションのみtextarea/interimに表示し、
 // 完了順に1件ずつ自動確定 (校正→finalize-session) する。
 // これにより異なるセッションの文字起こし結果がtextarea上で混在しない。
-// textareaは「表示中セッションが切り替わる (=次の録音が始まる) 瞬間」にのみ
-// クリアする。finalize直後にクリアすると、確定直後のテキストが一瞬しか
-// 見えずに消えてしまうため、確定後もそのセッションの内容を表示し続ける。
+// textareaは「次の録音が始まった瞬間」にはクリアしない (録音ボタンを押した
+// だけではまだ何も確定していないため)。表示中セッションが切り替わった後、
+// そのセッションで最初にrecognized (文言確定) を受け取った時点でtextareaを
+// クリアして確定テキストを反映する。それまでは前セッションの確定済みテキス
+// トを表示し続ける。
 let sessionQueue = [];
 let finalizing = false;
 let displayedSessionId = null;
@@ -203,7 +205,7 @@ let displayedSessionId = null;
 function getOrCreateSession(id) {
   let session = sessionQueue.find(s => s.id === id);
   if (!session) {
-    session = { id, text: '', ended: false };
+    session = { id, text: '', ended: false, needsClear: true };
     sessionQueue.push(session);
   }
   return session;
@@ -212,7 +214,6 @@ function getOrCreateSession(id) {
 function ensureDisplaying(session) {
   if (displayedSessionId === session.id) return;
   displayedSessionId = session.id;
-  document.getElementById('editor-textarea').value = session.text;
   updateEditorInterim('');
 }
 
@@ -225,6 +226,12 @@ async function tryAdvanceQueue() {
 
   finalizing = true;
   const textarea = document.getElementById('editor-textarea');
+  // 表示中にrecognizedが一度も来なかった (無音セッション、または前セッション
+  // の残存表示のまま終了した) 場合、確定前にfront.textへ強制同期する。
+  if (front.needsClear) {
+    textarea.value = front.text;
+    front.needsClear = false;
+  }
   if (isProofreadEnabled() && front.text.trim()) {
     updateEditorInterim('校正中...');
     try {
@@ -268,7 +275,15 @@ function connectSSE() {
     const session = getOrCreateSession(data.session_id);
     session.text += data.text;
     if (sessionQueue[0].id === session.id) {
-      appendToTextarea(data.text);
+      if (session.needsClear) {
+        // 表示切り替え後、初回のrecognizedで一括反映する。
+        // 前セッション確定処理中に既に蓄積されていた分も含めsession.text全体を書き込む
+        // (data.textだけをappendすると蓄積済み分が欠落する)。
+        document.getElementById('editor-textarea').value = session.text;
+        session.needsClear = false;
+      } else {
+        appendToTextarea(data.text);
+      }
       updateEditorInterim('');
     }
   });
