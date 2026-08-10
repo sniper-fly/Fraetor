@@ -12,9 +12,13 @@ from src.dictation.domain.models import RecordingSession, TranscriptionJob
 from src.dictation.domain.ports import SttCapabilities, SttEnginePort
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 from src.presentation.routes.shutdown_routes import shutdown as shutdown_handler
+from src.shared.config.dynamic_settings import DynamicSettings
+from tests.fakes import InMemorySettingsRepository
 
 if TYPE_CHECKING:
     from starlette.testclient import TestClient
+
+    from src.shared.config.ports import SettingsRepositoryPort
 
 
 class TestShutdown:
@@ -50,12 +54,22 @@ class TestShutdown:
     def test_shutdown_schedules_process_exit(self, client: TestClient) -> None:
         mock_shutdowner = MagicMock()
         client.app.state.shutdowner = mock_shutdowner  # type: ignore[attr-defined]
+        repo: SettingsRepositoryPort = client.app.state.settings_repository  # type: ignore[attr-defined]
 
         client.post("/api/shutdown")
 
-        mock_shutdowner.schedule.assert_called_once_with(
-            client.app.state.shutdown_delay_sec  # type: ignore[attr-defined]
-        )
+        mock_shutdowner.schedule.assert_called_once_with(repo.get().shutdown_delay_sec)
+
+    def test_shutdown_reads_delay_at_request_time(self, client: TestClient) -> None:
+        """設定を更新した直後の shutdown に新しい猶予時間が使われる。"""
+        mock_shutdowner = MagicMock()
+        client.app.state.shutdowner = mock_shutdowner  # type: ignore[attr-defined]
+        repo: SettingsRepositoryPort = client.app.state.settings_repository  # type: ignore[attr-defined]
+        repo.update(DynamicSettings(shutdown_delay_sec=2.5))
+
+        client.post("/api/shutdown")
+
+        mock_shutdowner.schedule.assert_called_once_with(2.5)
 
 
 class TestShutdownWaitsForTranscriptionQueue:
@@ -99,9 +113,10 @@ class TestShutdownWaitsForTranscriptionQueue:
         request.app.state.app_state = app_state
         request.app.state.recording_session_service = AsyncMock()
         request.app.state.transcription_queue = transcription_queue
-        request.app.state.mai_timeout_sec = 1
         request.app.state.shutdowner = MagicMock()
-        request.app.state.shutdown_delay_sec = 0.5
+        request.app.state.settings_repository = InMemorySettingsRepository(
+            DynamicSettings(mai_timeout_sec=1)
+        )
 
         response = await shutdown_handler(request)
 

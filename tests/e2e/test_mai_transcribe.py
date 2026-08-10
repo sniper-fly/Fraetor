@@ -35,15 +35,14 @@ def _make_client(
     container = Container()
     secrets = container.secrets()
     settings = container.settings()
+    dynamic = container.settings_repository().get()
     return MaiTranscribeClient(
         queue,
         endpoint=secrets.mai_endpoint,
         api_key=secrets.mai_api_key,
-        locale=settings.mai_locale,
-        model_name=settings.mai_model_name,
-        timeout_sec=timeout_sec
-        if timeout_sec is not None
-        else settings.mai_timeout_sec,
+        locale=dynamic.mai_locale,
+        model_name=dynamic.mai_model_name,
+        timeout_sec=timeout_sec if timeout_sec is not None else dynamic.mai_timeout_sec,
         sample_rate=settings.stt_sample_rate,
     )
 

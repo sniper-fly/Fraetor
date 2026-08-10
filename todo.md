@@ -17,23 +17,26 @@
 ### phase2: 消費側の settings_repository 経由化と DI 再配線
 目的: 動的化対象の値を `Settings` から削除し、全消費箇所を「利用する瞬間に `get()` を読む」形へ移行する。このフェーズ完了時点で「次回利用時に反映」が成立する。逐次 flush 用の `segment_silence_sec` の消費は phase3 で追加する。
 
-- [ ] `src/shared/config/settings.py`  # 動的化対象フィールドの削除 (除外項目は残す)
-- [ ] `tests/shared/config/test_settings.py`  # 削除に追随
-- [ ] `src/dictation/infrastructure/vad/factory.py`  # create_vad を新設し vad_threshold を遅延読み込み
-- [ ] `tests/dictation/infrastructure/vad/test_factory.py`  # 上記に対応する単体テスト
-- [ ] `src/dictation/infrastructure/stt/factory.py`  # settings_repository を受け取る signature へ変更
-- [ ] `tests/dictation/infrastructure/stt/test_factory.py`  # 上記に対応する単体テスト
-- [ ] `src/dictation/application/recording_session_service.py`  # start_session 実行時に get()
-- [ ] `tests/dictation/application/test_recording_session_service.py`  # 「次回反映」の検証を追加
-- [ ] `src/proofreading/application/proofread_text_use_case.py`  # execute 実行時に get()
-- [ ] `tests/proofreading/application/test_proofread_text_use_case.py`  # 「次回反映」の検証を追加
-- [ ] `src/presentation/routes/shutdown_routes.py`  # リクエスト時に shutdown_delay_sec を読む
-- [ ] `tests/presentation/routes/test_shutdown_routes.py`  # 上記に追随
-- [ ] `src/presentation/routes/recording_routes.py`  # SSE 接続時に sse_keepalive_sec を読む
-- [ ] `tests/presentation/routes/test_recording_routes.py`  # 上記に追随
-- [ ] `src/presentation/app.py`  # lifespan で app.state.settings_repository を設定
-- [ ] `src/containers.py`  # settings_repository の Singleton 追加と各 provider の配線変更
-- [ ] `tests/test_containers.py`  # 配線変更に追随
+- [x] `src/shared/config/settings.py`  # 動的化対象フィールドの削除 (除外項目は残す)
+- [x] `tests/shared/config/test_settings.py`  # 削除に追随
+- [x] `src/dictation/infrastructure/vad/factory.py`  # create_vad を新設し vad_threshold を遅延読み込み
+- [x] `tests/dictation/infrastructure/vad/test_factory.py`  # 上記に対応する単体テスト
+- [x] `src/dictation/infrastructure/stt/factory.py`  # settings_repository を受け取る signature へ変更
+- [x] `tests/dictation/infrastructure/stt/test_factory.py`  # 上記に対応する単体テスト
+- [x] `src/dictation/application/recording_session_service.py`  # start_session 実行時に get()
+- [x] `tests/dictation/application/test_recording_session_service.py`  # 「次回反映」の検証を追加
+- [x] `src/proofreading/application/proofread_text_use_case.py`  # execute 実行時に get()
+- [x] `tests/proofreading/application/test_proofread_text_use_case.py`  # 「次回反映」の検証を追加
+- [x] `src/presentation/routes/shutdown_routes.py`  # リクエスト時に shutdown_delay_sec を読む
+- [x] `tests/presentation/routes/test_shutdown_routes.py`  # 上記に追随
+- [x] `src/presentation/routes/recording_routes.py`  # SSE 接続時に sse_keepalive_sec を読む
+- [x] `tests/presentation/routes/test_recording_routes.py`  # 上記に追随
+- [x] `src/presentation/app.py`  # lifespan で app.state.settings_repository を設定
+- [x] `src/containers.py`  # settings_repository の Singleton 追加と各 provider の配線変更
+- [x] `tests/test_containers.py`  # 配線変更に追随
+- [x] `tests/fakes.py`  # InMemorySettingsRepository (プラン外。複数テストで port のフェイクを共用するため新設)
+- [x] `tests/conftest.py`  # プラン外。history_dir を tmp_path へ隔離 (settings.jsonc が実ホームに書かれるのを防ぐ)
+- [x] `tests/e2e/conftest.py`  # プラン外。タイムアウト短縮を環境変数から settings.jsonc 事前書き出しへ移行
 
 ### phase3: 無音区切りによる逐次 flush
 目的: VAD の発話開始位置公開から STT の部分送信、無音監視タイマー、コーディネータ統合までを一続きで実装する。`SegmentAccumulator` / SSE / フロントエンドは変更しない (プラン §5 の通り、既存経路がそのまま機能することを既存テストで担保する)。

@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 from src.presentation.routes.recording_routes import events as events_handler
+from src.shared.config.dynamic_settings import DynamicSettings
+from tests.fakes import InMemorySettingsRepository
 
 if TYPE_CHECKING:
     from starlette.testclient import TestClient
@@ -44,13 +46,16 @@ class TestToggleRecording:
 
 class TestEventsSSE:
     async def test_sends_keepalive(self, client: TestClient) -> None:
-        """keepalive間隔経過後にkeepaliveイベントが生成される"""
-        client.app.state.sse_keepalive_sec = 0.1  # type: ignore[attr-defined]
+        """keepalive間隔経過後にkeepaliveイベントが生成される。
 
+        `sse_keepalive_sec` は秒単位の int なので最短の1秒を使う。
+        """
         app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
         request = MagicMock()
         request.app.state.app_state = app_state
-        request.app.state.sse_keepalive_sec = 0.1
+        request.app.state.settings_repository = InMemorySettingsRepository(
+            DynamicSettings(sse_keepalive_sec=1)
+        )
 
         response = await events_handler(request)
 
@@ -59,5 +64,5 @@ class TestEventsSSE:
                 return event
             return None  # pragma: no cover
 
-        event = await asyncio.wait_for(_first_event(), timeout=2)
+        event = await asyncio.wait_for(_first_event(), timeout=3)
         assert event == {"event": "keepalive", "data": ""}

@@ -19,13 +19,12 @@ from src.dictation.application.transcription_queue import TranscriptionQueue
 from src.dictation.infrastructure.audio.factory import create_audio_capture
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 from src.dictation.infrastructure.stt.factory import create_stt_engine
-from src.dictation.infrastructure.vad.silero_vad_detector import (
-    SileroSpeechActivityDetector,
-)
+from src.dictation.infrastructure.vad.factory import create_vad
 from src.proofreading.application.proofread_text_use_case import ProofreadTextUseCase
 from src.proofreading.infrastructure.vertex_gemini_proofreader import (
     VertexGeminiProofreader,
 )
+from src.shared.config.jsonc_settings_repository import JsoncSettingsRepository
 from src.shared.config.secrets_loader import Secrets, load_secrets
 from src.shared.config.settings import load_settings
 from src.shared.process.signal_process_shutdowner import ProcessShutdowner
@@ -60,6 +59,16 @@ def _load_secrets_or_empty() -> Secrets:
         )
 
 
+def _settings_file_path(history_dir: Path) -> Path:
+    """動的設定ファイルのパスを組み立てる。
+
+    履歴 (`history.jsonl`) と同じアプリ専用ディレクトリ配下に置く。
+    E2E テストが `FRAETOR_HISTORY_DIR` を差し替えると設定ファイルも
+    一緒に隔離されるため、テスト間で設定が漏れない。
+    """
+    return history_dir / "settings.jsonc"
+
+
 def _create_proofreader(
     *,
     vertex_sa_info: dict[str, object],
@@ -90,6 +99,13 @@ class Container(containers.DeclarativeContainer):
     settings = providers.Singleton(load_settings)
     secrets = providers.Singleton(_load_secrets_or_empty)
 
+    settings_repository = providers.Singleton(
+        JsoncSettingsRepository,
+        path=providers.Callable(
+            _settings_file_path, history_dir=settings.provided.history_dir
+        ),
+    )
+
     templates_dir = providers.Object(Path(__file__).parent / "templates")
 
     audio_capture: providers.Provider[AudioCapturePort] = providers.Singleton(
@@ -101,20 +117,21 @@ class Container(containers.DeclarativeContainer):
 
     app_state = providers.Singleton(AppState, broadcaster=broadcaster)
 
+    # 動的設定に依存する値 (locale/model/timeout/threshold) は provider の
+    # 引数として束縛せず、ファクトリ関数が呼び出し時に settings_repository
+    # から読む。DI 配線時に値が固定されると設定画面の変更が反映されない。
     stt_engine_factory = providers.Factory(
         create_stt_engine,
+        settings_repository=settings_repository,
         endpoint=secrets.provided.mai_endpoint,
         api_key=secrets.provided.mai_api_key,
-        locale=settings.provided.mai_locale,
-        model_name=settings.provided.mai_model_name,
-        timeout_sec=settings.provided.mai_timeout_sec,
         sample_rate=settings.provided.stt_sample_rate,
     ).provider
 
     vad_factory = providers.Factory(
-        SileroSpeechActivityDetector,
+        create_vad,
+        settings_repository=settings_repository,
         sample_rate=settings.provided.stt_sample_rate,
-        threshold=settings.provided.vad_threshold,
     ).provider
 
     audio_pipeline_coordinator = providers.Singleton(
@@ -142,8 +159,7 @@ class Container(containers.DeclarativeContainer):
         audio_pipeline=audio_pipeline_coordinator,
         event_relay=stt_event_relay,
         transcription_queue=transcription_queue,
-        max_session_duration_sec=settings.provided.max_session_duration_sec,
-        silence_timeout_sec=settings.provided.silence_timeout_sec,
+        settings_repository=settings_repository,
     )
 
     history_repository = providers.Singleton(
@@ -171,7 +187,7 @@ class Container(containers.DeclarativeContainer):
     proofread_text_use_case = providers.Singleton(
         ProofreadTextUseCase,
         proofreader=proofreader,
-        timeout_sec=settings.provided.proofread_timeout_sec,
+        settings_repository=settings_repository,
     )
 
     shutdowner = providers.Singleton(ProcessShutdowner)

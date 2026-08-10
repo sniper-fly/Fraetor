@@ -17,6 +17,8 @@ from src.dictation.application.stt_event_relay import SttEventRelay
 from src.dictation.application.transcription_queue import TranscriptionQueue
 from src.dictation.domain.ports import SttCapabilities, SttEnginePort
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
+from src.shared.config.dynamic_settings import DynamicSettings
+from tests.fakes import InMemorySettingsRepository
 
 _MAX_DURATION_SEC = 600
 _SILENCE_TIMEOUT_SEC = 120
@@ -24,12 +26,18 @@ _SILENCE_TIMEOUT_SEC = 120
 
 def _make_service(
     *,
-    max_duration_sec: float = _MAX_DURATION_SEC,
-    silence_timeout_sec: float = _SILENCE_TIMEOUT_SEC,
+    max_duration_sec: int = _MAX_DURATION_SEC,
+    silence_timeout_sec: int = _SILENCE_TIMEOUT_SEC,
     post_processing: bool = False,
     stt_start_side_effect: Exception | None = None,
     audio_start_side_effect: Exception | None = None,
-) -> tuple[RecordingSessionService, AppState, MagicMock, TranscriptionQueue]:
+) -> tuple[
+    RecordingSessionService,
+    AppState,
+    MagicMock,
+    TranscriptionQueue,
+    InMemorySettingsRepository,
+]:
     app_state = AppState(broadcaster=SSEBroadcaster())
 
     mock_stt = MagicMock(spec=SttEnginePort)
@@ -52,21 +60,27 @@ def _make_service(
     event_relay = SttEventRelay(app_state, accumulator)
     transcription_queue = TranscriptionQueue(app_state, accumulator)
     transcription_queue.start()
+    settings_repository = InMemorySettingsRepository(
+        DynamicSettings(
+            max_session_duration_sec=max_duration_sec,
+            silence_timeout_sec=silence_timeout_sec,
+            segment_silence_sec=min(3.0, silence_timeout_sec / 2),
+        )
+    )
     service = RecordingSessionService(
         app_state,
         audio_pipeline,
         event_relay,
         transcription_queue,
-        max_session_duration_sec=max_duration_sec,
-        silence_timeout_sec=silence_timeout_sec,
+        settings_repository=settings_repository,
     )
-    return service, app_state, mock_stt, transcription_queue
+    return service, app_state, mock_stt, transcription_queue, settings_repository
 
 
 class TestStartSession:
     async def test_creates_session_with_correct_fields(self) -> None:
         """セッション開始 → RecordingSession 作成"""
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
 
         await service.start_session()
 
@@ -79,7 +93,7 @@ class TestStartSession:
         await queue.shutdown(timeout=1)
 
     async def test_broadcasts_recording_started(self) -> None:
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
         sub = app_state.broadcaster.subscribe()
 
         await service.start_session()
@@ -92,7 +106,7 @@ class TestStartSession:
         await queue.shutdown(timeout=1)
 
     async def test_ignores_start_when_already_recording(self) -> None:
-        service, _, mock_stt, queue = _make_service()
+        service, _, mock_stt, queue, _repo = _make_service()
         await service.start_session()
         mock_stt.start.reset_mock()
 
@@ -107,7 +121,7 @@ class TestStartSession:
 class TestStopSession:
     async def test_stops_recording_immediately_without_waiting_for_stt(self) -> None:
         """stop_sessionはSTT完了を待たず即座に返る"""
-        service, app_state, mock_stt, queue = _make_service(post_processing=True)
+        service, app_state, mock_stt, queue, _repo = _make_service(post_processing=True)
         await service.start_session()
         stt_stop_proceed = asyncio.Event()
 
@@ -125,7 +139,7 @@ class TestStopSession:
         await queue.shutdown(timeout=1)
 
     async def test_stop_when_not_recording_is_noop(self) -> None:
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
 
         await service.stop_session()
 
@@ -133,7 +147,7 @@ class TestStopSession:
         await queue.shutdown(timeout=1)
 
     async def test_broadcasts_status_recording_false(self) -> None:
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
         await service.start_session()
         sub = app_state.broadcaster.subscribe()
 
@@ -149,7 +163,7 @@ class TestStopSession:
         await queue.shutdown(timeout=1)
 
     async def test_timed_out_flag_reaches_finalized_session(self) -> None:
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
         await service.start_session()
 
         await service.stop_session(timed_out=True)
@@ -159,7 +173,7 @@ class TestStopSession:
 
     async def test_enqueues_transcription_job_on_stop(self) -> None:
         """停止時に文字起こしジョブがキューに投入され、非同期に処理される"""
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
         await service.start_session()
 
         await service.stop_session()
@@ -171,7 +185,7 @@ class TestStopSession:
     async def test_recognized_events_reach_pending_session_after_queue_processing(
         self,
     ) -> None:
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
         await service.start_session()
 
         event_queue = service._audio_pipeline.event_queue
@@ -188,7 +202,7 @@ class TestStopSession:
 class TestSttEventProcessing:
     async def test_full_text_assembled_from_segments(self) -> None:
         """全セグメントのテキスト結合"""
-        service, app_state, _, queue = _make_service()
+        service, app_state, _, queue, _repo = _make_service()
         await service.start_session()
 
         event_queue = service._audio_pipeline.event_queue
@@ -204,16 +218,20 @@ class TestSttEventProcessing:
 
 
 class TestSessionTimeout:
+    """`DynamicSettings` のタイムアウトは秒単位の int なので、テストでも
+    最短の 1 秒を使う (旧テストの 0.1 秒は表現できない)。
+    """
+
     async def test_auto_stops_after_max_duration(self) -> None:
         """最大セッション時間経過 → 超過時は自動で録音停止"""
-        service, app_state, mock_stt, queue = _make_service(
-            max_duration_sec=0.1, silence_timeout_sec=10
+        service, app_state, mock_stt, queue, _repo = _make_service(
+            max_duration_sec=1, silence_timeout_sec=10
         )
 
         await service.start_session()
         assert app_state.recording is True
 
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(1.2)
 
         assert app_state.recording is False
         assert app_state.current_session is None
@@ -223,17 +241,47 @@ class TestSessionTimeout:
 
     async def test_auto_stops_after_silence_timeout(self) -> None:
         """発話なしのまま silence_timeout_sec 経過 → 自動で録音停止"""
-        service, app_state, _, queue = _make_service(
-            max_duration_sec=10, silence_timeout_sec=0.1
+        service, app_state, _, queue, _repo = _make_service(
+            max_duration_sec=10, silence_timeout_sec=1
         )
 
         await service.start_session()
         assert app_state.recording is True
 
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(1.2)
 
         assert app_state.recording is False
         assert app_state.current_session is None
+
+        await queue.shutdown(timeout=1)
+
+    async def test_next_session_uses_updated_timeout(self) -> None:
+        """`update()` した値は次の `start_session()` から反映される。
+
+        1回目のセッションは長いタイムアウトで開始し、その間に設定を
+        1秒へ縮める。1回目は停止せず、停止後に開始した2回目だけが
+        新しい値でタイムアウトすることを確認する。
+        """
+        service, app_state, _, queue, repo = _make_service(
+            max_duration_sec=600, silence_timeout_sec=120
+        )
+        await service.start_session()
+
+        repo.update(
+            DynamicSettings(
+                max_session_duration_sec=1,
+                silence_timeout_sec=120,
+                segment_silence_sec=3.0,
+            )
+        )
+        await asyncio.sleep(1.2)
+        assert app_state.recording is True, "実行中セッションには反映しない"
+
+        await service.stop_session()
+        await service.start_session()
+        await asyncio.sleep(1.2)
+
+        assert app_state.recording is False
 
         await queue.shutdown(timeout=1)
 
@@ -241,7 +289,7 @@ class TestSessionTimeout:
 class TestSessionStartFailure:
     async def test_stt_failure_aborts_session(self) -> None:
         """STT開始失敗時はセッションを中止する"""
-        service, app_state, _, queue = _make_service(
+        service, app_state, _, queue, _repo = _make_service(
             stt_start_side_effect=RuntimeError("Auth failed")
         )
 
@@ -253,7 +301,7 @@ class TestSessionStartFailure:
         await queue.shutdown(timeout=1)
 
     async def test_stt_failure_broadcasts_error(self) -> None:
-        service, app_state, _, queue = _make_service(
+        service, app_state, _, queue, _repo = _make_service(
             stt_start_side_effect=RuntimeError("Auth failed")
         )
         sub = app_state.broadcaster.subscribe()
@@ -271,7 +319,7 @@ class TestSessionStartFailure:
 
     async def test_stream_open_failure_aborts_session(self) -> None:
         """ストリームを開けない場合はセッションを中止する"""
-        service, app_state, _, queue = _make_service(
+        service, app_state, _, queue, _repo = _make_service(
             audio_start_side_effect=RuntimeError("No audio device")
         )
 
@@ -294,7 +342,7 @@ class TestConcurrentStartStop:
     async def test_start_does_not_wait_for_transcription_to_complete(self) -> None:
         """stop_session中のSTT API呼び出しが長時間かかっても、
         start_sessionは待たされず即座に次のセッションを開始できる。"""
-        service, app_state, mock_stt, queue = _make_service(post_processing=True)
+        service, app_state, mock_stt, queue, _repo = _make_service(post_processing=True)
         await service.start_session()
 
         assert app_state.current_session is not None
@@ -328,7 +376,7 @@ class TestConcurrentStartStop:
 
     async def test_double_stop_second_call_is_noop(self) -> None:
         """録音していない状態でのstop_sessionは何もしない (冪等)。"""
-        service, _, mock_stt, queue = _make_service(post_processing=True)
+        service, _, mock_stt, queue, _repo = _make_service(post_processing=True)
         await service.start_session()
 
         mock_stt.stop = AsyncMock()

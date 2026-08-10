@@ -45,7 +45,7 @@ def _build_lifespan(
         for warning in _validate_secrets(container):
             logger.warning(warning)
 
-        settings = container.settings()
+        settings_repository = container.settings_repository()
         app.state.app_state = container.app_state()
         app.state.templates_dir = container.templates_dir()
         app.state.recording_session_service = container.recording_session_service()
@@ -54,9 +54,7 @@ def _build_lifespan(
         app.state.history_repository = container.history_repository()
         app.state.finalize_session_use_case = container.finalize_session_use_case()
         app.state.proofread_text_use_case = container.proofread_text_use_case()
-        app.state.sse_keepalive_sec = settings.sse_keepalive_sec
-        app.state.shutdown_delay_sec = settings.shutdown_delay_sec
-        app.state.mai_timeout_sec = settings.mai_timeout_sec
+        app.state.settings_repository = settings_repository
 
         app.state.transcription_queue.start()
         logger.info("Fraetor starting")
@@ -65,7 +63,7 @@ def _build_lifespan(
         if app_state.recording:
             await app.state.recording_session_service.stop_session()
         await app.state.transcription_queue.shutdown(
-            timeout=settings.mai_timeout_sec + 5
+            timeout=settings_repository.get().mai_timeout_sec + 5
         )
         logger.info("Fraetor shutting down")
 

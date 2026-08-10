@@ -65,15 +65,40 @@ def _wait_for_server(process: subprocess.Popen[bytes]) -> None:
     raise RuntimeError(msg)
 
 
+def _write_dynamic_settings(history_dir: Path, overrides: dict[str, object]) -> None:
+    """起動前に `settings.jsonc` を書き、動的設定を E2E 用の値に短縮する。
+
+    タイムアウト系は `Settings` (環境変数) ではなく `DynamicSettings`
+    (設定ファイル) の管轄なので、環境変数では上書きできない。ファイルが
+    既に存在すればサーバーはそれを読むため、起動前に書いておけばよい。
+    無音区切り (3秒既定) より短い `silence_timeout_sec` は
+    `DynamicSettings` のバリデータに弾かれるため、合わせて縮める。
+    """
+    history_dir.mkdir(parents=True, exist_ok=True)
+    settings = {
+        "max_session_duration_sec": 20,
+        "silence_timeout_sec": 3,
+        "segment_silence_sec": 1.0,
+        **overrides,
+    }
+    (history_dir / "settings.jsonc").write_text(
+        json.dumps(settings, indent=2), encoding="utf-8"
+    )
+
+
 def _start_server(
-    tmp_path: Path, extra_env: dict[str, str], *, module: str = "src"
+    tmp_path: Path,
+    extra_env: dict[str, str],
+    *,
+    module: str = "src",
+    settings_overrides: dict[str, object] | None = None,
 ) -> subprocess.Popen[bytes]:
+    history_dir = tmp_path / "history"
+    _write_dynamic_settings(history_dir, settings_overrides or {})
     env = {
         **os.environ,
         "FRAETOR_SERVER_PORT": str(_SERVER_PORT),
-        "FRAETOR_MAX_SESSION_DURATION_SEC": "20",
-        "FRAETOR_SILENCE_TIMEOUT_SEC": "3",
-        "FRAETOR_HISTORY_DIR": str(tmp_path / "history"),
+        "FRAETOR_HISTORY_DIR": str(history_dir),
         **extra_env,
     }
     process = subprocess.Popen(
@@ -104,9 +129,9 @@ def _stop_server(process: subprocess.Popen[bytes]) -> None:
 def fraetor_server(tmp_path: Path) -> Generator[str]:
     """実プロセスとして `uv run fraetor` 相当を起動し、ベースURLを返す。
 
-    タイムアウト・ポート・履歴ファイルは環境変数で E2E 専用の値に
-    短縮/隔離する。マイクは実行環境のデフォルト入力デバイスをそのまま
-    使う (録音内容を検証しないシナリオ向け)。
+    ポート・履歴ファイルは環境変数で、タイムアウト系は起動前に書き出す
+    `settings.jsonc` で E2E 専用の値に短縮/隔離する。マイクは実行環境の
+    デフォルト入力デバイスをそのまま使う (録音内容を検証しないシナリオ向け)。
     """
     process = _start_server(tmp_path, {})
     try:
@@ -127,13 +152,18 @@ class AudioServerHandle:
         self.process: subprocess.Popen[bytes] | None = None
 
     def start(
-        self, wav_filename: str, *, extra_env: dict[str, str] | None = None
+        self,
+        wav_filename: str,
+        *,
+        extra_env: dict[str, str] | None = None,
+        settings_overrides: dict[str, object] | None = None,
     ) -> str:
         wav_path = _AUDIO_DIR / wav_filename
         self.process = _start_server(
             self._tmp_path,
             {_ENV_AUDIO_FILE: str(wav_path), **(extra_env or {})},
             module="tests.e2e.e2e_entrypoint",
+            settings_overrides=settings_overrides,
         )
         return _SERVER_URL
 
