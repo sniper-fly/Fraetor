@@ -16,6 +16,8 @@
         class="px-4 py-2 rounded bg-blue-600 text-white font-medium">メイン</button>
       <button id="tab-history" onclick="switchTab('history')"
         class="px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium">履歴</button>
+      <button id="tab-settings" onclick="switchTab('settings')"
+        class="px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium">設定</button>
     </div>
 
     <!-- ステータスバー -->
@@ -60,6 +62,19 @@
         <p class="text-gray-500">読み込み中...</p>
       </div>
     </div>
+
+    <!-- 設定タブ -->
+    <div id="panel-settings" class="hidden">
+      <!-- 入力欄は SETTINGS_FIELDS からJSで生成する (項目定義の二重管理を避ける) -->
+      <div id="settings-form" class="space-y-3">
+        <p class="text-gray-500">読み込み中...</p>
+      </div>
+      <div class="flex items-center gap-3 mt-4">
+        <button id="btn-save-settings" onclick="saveSettings()"
+          class="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors">保存</button>
+        <p id="settings-status" class="text-sm"></p>
+      </div>
+    </div>
   </div>
 
   <div id="copy-toast"
@@ -68,24 +83,19 @@
   </div>
 
 <script>
-function switchTab(tab) {
-  const mainBtn = document.getElementById('tab-main');
-  const histBtn = document.getElementById('tab-history');
-  const mainPanel = document.getElementById('panel-main');
-  const histPanel = document.getElementById('panel-history');
+// タブ名 -> 表示時に走らせる読み込み処理 (なければ null)。
+// タブが増えても if/else の分岐を足さずに済むよう、一覧で持つ。
+const TABS = { main: null, history: () => loadHistory(), settings: () => loadSettings() };
 
-  if (tab === 'main') {
-    mainBtn.className = 'px-4 py-2 rounded bg-blue-600 text-white font-medium';
-    histBtn.className = 'px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium';
-    mainPanel.classList.remove('hidden');
-    histPanel.classList.add('hidden');
-  } else {
-    histBtn.className = 'px-4 py-2 rounded bg-blue-600 text-white font-medium';
-    mainBtn.className = 'px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium';
-    histPanel.classList.remove('hidden');
-    mainPanel.classList.add('hidden');
-    loadHistory();
+function switchTab(tab) {
+  const activeClass = 'px-4 py-2 rounded bg-blue-600 text-white font-medium';
+  const inactiveClass = 'px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium';
+  for (const name of Object.keys(TABS)) {
+    const isActive = name === tab;
+    document.getElementById(`tab-${name}`).className = isActive ? activeClass : inactiveClass;
+    document.getElementById(`panel-${name}`).classList.toggle('hidden', !isActive);
   }
+  TABS[tab]?.();
 }
 
 function updateRecordingUI(recording) {
@@ -368,6 +378,100 @@ async function deleteHistory(event, sessionId) {
     }
   } catch {
     // ネットワークエラー時は何もしない
+  }
+}
+
+// --- 設定タブ ---
+// key は DynamicSettings のフィールド名と一致させる。
+// step があれば type="number" (小数は step で刻みを指定)、なければ type="text"。
+const SETTINGS_FIELDS = [
+  { key: 'max_session_duration_sec', label: '最大セッション時間', unit: '秒', step: '1' },
+  { key: 'silence_timeout_sec', label: '無音セッション終了', unit: '秒', step: '1' },
+  { key: 'segment_silence_sec', label: '無音区切り (逐次文字起こし)', unit: '秒', step: '0.5' },
+  { key: 'vad_threshold', label: '発話判定の閾値', unit: '0〜1', step: '0.05' },
+  { key: 'mai_locale', label: '認識ロケール', unit: '' },
+  { key: 'mai_model_name', label: '認識モデル', unit: '' },
+  { key: 'mai_timeout_sec', label: '認識タイムアウト', unit: '秒', step: '1' },
+  { key: 'proofread_timeout_sec', label: '校正タイムアウト', unit: '秒', step: '1' },
+  { key: 'shutdown_delay_sec', label: '終了までの遅延', unit: '秒', step: '0.1' },
+  { key: 'sse_keepalive_sec', label: 'SSEキープアライブ間隔', unit: '秒', step: '1' },
+];
+
+// GET のレスポンス全体。PUT は全項目差し替えなので、フォームに出していない
+// 項目 (将来サーバー側だけに追加されたもの) を暗黙にリセットしないよう、
+// 元の値を保持してフォーム入力だけを上書きして送る。
+let loadedSettings = null;
+
+function setSettingsStatus(message, isError) {
+  const status = document.getElementById('settings-status');
+  status.textContent = message;
+  status.className = `text-sm ${isError ? 'text-red-400' : 'text-green-400'}`;
+}
+
+async function loadSettings() {
+  const container = document.getElementById('settings-form');
+  setSettingsStatus('', false);
+  try {
+    const res = await fetch('/api/settings');
+    loadedSettings = await res.json();
+  } catch {
+    container.innerHTML = '<p class="text-gray-500">設定の読み込みに失敗しました</p>';
+    return;
+  }
+  container.innerHTML = SETTINGS_FIELDS.map(f => `
+    <div class="flex items-center justify-between bg-gray-800 rounded p-3">
+      <label for="setting-${f.key}" class="text-sm">${escapeHtml(f.label)}</label>
+      <div class="flex items-center gap-2">
+        <input id="setting-${f.key}" data-key="${f.key}"
+          type="${f.step ? 'number' : 'text'}"${f.step ? ` step="${f.step}"` : ''}
+          value="${escapeAttr(loadedSettings[f.key])}"
+          class="w-40 bg-gray-900 text-gray-100 text-sm px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500">
+        <span class="text-xs text-gray-400 w-10">${escapeHtml(f.unit)}</span>
+      </div>
+    </div>`).join('');
+}
+
+function collectSettings() {
+  const body = { ...loadedSettings };
+  for (const field of SETTINGS_FIELDS) {
+    const value = document.getElementById(`setting-${field.key}`).value;
+    body[field.key] = field.step ? Number(value) : value;
+  }
+  return body;
+}
+
+function formatSettingsError(detail) {
+  if (!Array.isArray(detail)) return '保存に失敗しました';
+  // FastAPI の 422 は [{loc: [...], msg: "..."}] 形式。loc の末尾が
+  // フィールド名だが、model_validator 違反ではボディ全体を指すため
+  // 末尾が 'body' になる。その場合はメッセージのみ表示する。
+  return detail.map(e => {
+    const field = e.loc?.[e.loc.length - 1];
+    return field && field !== 'body' ? `${field}: ${e.msg}` : e.msg;
+  }).join(' / ');
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('btn-save-settings');
+  btn.disabled = true;
+  setSettingsStatus('保存中...', false);
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectSettings()),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      loadedSettings = data;
+      setSettingsStatus('保存しました (次回の録音・校正から反映されます)', false);
+    } else {
+      setSettingsStatus(formatSettingsError(data.detail), true);
+    }
+  } catch {
+    setSettingsStatus('保存に失敗しました', true);
+  } finally {
+    btn.disabled = false;
   }
 }
 

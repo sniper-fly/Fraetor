@@ -13,6 +13,7 @@ from src.presentation.routes import (
     page_routes,
     proofread_routes,
     recording_routes,
+    settings_routes,
     shutdown_routes,
 )
 
@@ -87,6 +88,7 @@ def create_app(audio_capture: AudioCapturePort | None = None) -> FastAPI:
     app.include_router(history_routes.router)
     app.include_router(proofread_routes.router)
     app.include_router(shutdown_routes.router)
+    app.include_router(settings_routes.router)
     return app
 
 

@@ -62,13 +62,24 @@ flush の完了を待つ。プラン通りに `monitor.stop()` を先に呼ぶ�
 ### phase4: 設定 API・設定画面・ドキュメント整合
 目的: 動的設定をブラウザから編集できるようにし、設計ドキュメントを実装に追随させる。
 
-- [ ] `src/presentation/routes/settings_routes.py`  # GET / PUT /api/settings (DynamicSettings を直接 I/O モデルに使う)
-- [ ] `tests/presentation/routes/test_settings_routes.py`  # 取得・更新の反映・不正値で 422 の検証
-- [ ] `src/presentation/app.py`  # settings_routes の router 登録
-- [ ] `src/templates/index.html`  # 「設定」タブ追加、switchTab の3値対応、loadSettings / saveSettings
-- [ ] `design.md`  # 定数章・VAD 章・データフロー章の更新と「動的設定」章の新設
+- [x] `src/presentation/routes/settings_routes.py`  # GET / PUT /api/settings (DynamicSettings を直接 I/O モデルに使う)
+- [x] `tests/presentation/routes/test_settings_routes.py`  # 取得・更新の反映・不正値で 422 の検証
+- [x] `src/presentation/app.py`  # settings_routes の router 登録
+- [x] `src/templates/index.html`  # 「設定」タブ追加、switchTab の3値対応、loadSettings / saveSettings
+- [x] `tests/presentation/routes/test_page_routes.py`  # プラン外。JS の SETTINGS_FIELDS / TABS が DynamicSettings と DOM に一致することの検証
+- [x] `design.md`  # 定数章・VAD 章・データフロー章の更新と「動的設定」章・「逐次文字起こし」章の新設
 - [ ] 実装完了後、E2E テスト (特に `tests/e2e/test_mic_and_vad.py` / `test_mai_transcribe.py`) の実行可否をユーザーに確認する
 - [ ] 3秒以上の無音を挟んだ発話で逐次追記されること・リードタイム短縮を実機で手動確認する
+
+プラン (§7.1) からの逸脱: `PUT /api/settings` はボディを型付きパラメータ
+(`body: DynamicSettings`) で受ける。プラン通りハンドラ内で `model_validate()` を
+呼ぶと `ValidationError` が FastAPI に捕捉されず 500 になり、「不正値で 422」という
+要件を満たせない (ミューテーションテストで確認済み)。
+
+プラン外の判断: 設定項目一覧はJS側の `SETTINGS_FIELDS` とサーバー側の
+`DynamicSettings` で二重に持つことになる。片方だけ増減すると「入力欄がない項目が
+既定値へ静かに戻る」形で壊れるため、HTML を正規表現で読んで項目一致を検証する
+テストを `test_page_routes.py` に追加した (ブラウザ起動不要)。
 
 ---
 

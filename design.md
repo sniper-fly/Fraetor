@@ -54,6 +54,8 @@ pyperclip でクリップボードにコピー
 | 11 | 録音停止時に LLM (Vertex AI Gemini) でテキスト自動校正。デフォルトON、ブラウザUIでON/OFF切替可能 |
 | 12 | 校正は誤字脱字・余計な句読点・フィラーワードを修正し、原文の意味を変えない |
 | 13 | 発話終了から2分間無音が続いたら自動で録音停止 (Silero VAD でローカル検出) |
+| 14 | 無音が3秒続いたら、そこまでの発話区間を1セグメントとして逐次文字起こしに送る (録音中にテキストが順次確定していく) |
+| 15 | 一部の設定値はプロセス再起動なしにブラウザの設定タブから変更できる (「動的設定」章参照) |
 
 ## ブラウザ UI
 
@@ -61,7 +63,7 @@ pyperclip でクリップボードにコピー
 
 ```
 ┌─ Voice Input ──────────────────────────────────┐
-│ [メイン] [履歴]                                   │
+│ [メイン] [履歴] [設定]                             │
 │                                                  │
 │ ┌──────────────────────────────────────────────┐ │
 │ │          録音: ● 停止中  校正: [ON]              │ │
@@ -82,7 +84,8 @@ pyperclip でクリップボードにコピー
 - textarea の下に interim テキストを読み取り専用で表示 (先頭セッションの分のみ)
 - SSE `recognized` イベント受信時: `session_id` が指す表示キュー内セッションに
   テキストを蓄積。先頭セッションの場合のみ textarea 末尾に追加表示
-  (カーソル位置を保持)
+  (カーソル位置を保持)。1セッションの録音中に無音区切りごとに複数回届く
+  (「逐次文字起こし (無音区切り)」章参照)
 - SSE `session_end` 受信時: 該当セッションを完了済みにする。先頭セッションが
   完了していれば、校正ON時は `POST /api/proofread` で校正後、
   `POST /api/finalize-session` で送信し確定する。**textarea はこの時点では
@@ -112,6 +115,31 @@ pyperclip でクリップボードにコピー
 - 新しいセッションが上に表示
 - 各履歴カードの右上に「削除」ボタン。クリックで即削除（確認なし）
 - 削除後は一覧を再取得して再描画
+
+### 設定タブ
+
+```
+┌─ Voice Input ──────────────────────────────────┐
+│ [メイン] [履歴] [設定]                             │
+│                                                  │
+│ ┌────────────────────────────────────────────┐  │
+│ │ 最大セッション時間            [   600 ] 秒  │  │
+│ │ 無音セッション終了            [   120 ] 秒  │  │
+│ │ 無音区切り (逐次文字起こし)   [   3.0 ] 秒  │  │
+│ │ 発話判定の閾値                [   0.5 ] 0〜1│  │
+│ │ ...                                          │  │
+│ └────────────────────────────────────────────┘  │
+│ [保存]  保存しました (次回の録音から反映されます)   │
+└──────────────────────────────────────────────────┘
+```
+
+- タブ表示時に `GET /api/settings` で現在値を読み、入力欄を生成する
+- 入力欄の一覧はJS側の `SETTINGS_FIELDS` (項目名・ラベル・単位・step) が
+  唯一の定義元。`DynamicSettings` との項目一致は
+  `tests/presentation/routes/test_page_routes.py` で検証する
+  (片方だけ増減すると、欠落項目が既定値へ静かに戻るため)
+- 「保存」で全項目を `PUT /api/settings` に送る。部分更新ではない
+- 422 のバリデーションエラーは FastAPI の `detail` を整形してその場に表示する
 
 ## セッション管理
 
@@ -168,9 +196,99 @@ pyperclip でクリップボードにコピー
   (32ms分) あたりの推論は1ms未満であり、既存の `feed_audio` と同程度に
   軽いため、別スレッド/非同期化は行わない
 - VAD推論の例外はログに記録して握り潰し、録音・STTには伝播させない
+- 無音タイムアウト用の `last_speech_time` (`time.monotonic()` 基準) に加え、
+  逐次文字起こしの前方無音削除用に `last_speech_start_sample` を公開する。
+  `VADIterator` が発話開始時に返す `start` (= `speech_pad_ms` 分さかのぼった
+  累積サンプル位置) をそのまま保持する。基準はこのVADインスタンスに投入した
+  累積サンプル数で、STTへ渡すPCMと同一ストリームなので、`* 2` (16bit) で
+  そのままバッファのバイトオフセットに換算できる。発話未検出時は `None`
 - モデルは JIT 形式 (`load_silero_vad()` デフォルト、torch 経由) を使用。
   torch は CPU 専用ビルドを `pyproject.toml` の `[tool.uv.sources]` /
   `[[tool.uv.index]]` で固定し、GPU 関連の巨大な依存を回避している
+
+## 逐次文字起こし (無音区切り)
+
+録音中に無音が `segment_silence_sec` 秒 (既定3秒) 続いた時点で、そこまでの
+発話区間を1セグメントとして送信する。セッション全体を停止時に1回送る方式に
+比べ、確定までのリードタイムがセッション長に比例して伸びなくなり、無音区間を
+送らない分だけデータ量も減る。トレードオフとしてAPIリクエスト回数は増える。
+
+- **`SegmentSilenceMonitor`** (`dictation/application/`):
+  `SessionTimeoutMonitor` と同じ「残り時間だけ `asyncio.sleep` して起きる」
+  方式。ただし1セッション中に何度も発火するため、発火後もループを続ける。
+  無音が続く間は `segment_silence_sec` おきに発火し続けるが、「送るものが
+  あるか」の判定は送信済み位置を知っているSTTクライアント側のno-opガードに
+  委ねる (監視側が状態を二重に持たない)
+- **`SttEnginePort.flush(trim_before_sample)`**: 未送信区間のうち
+  `trim_before_sample` 以降を1セグメントとして送信する。`stop()` と同じく
+  `recognized` イベントをキューに投入する。失敗しても例外は伝播させず、
+  そのセグメントのテキストを失うだけに留める (リトライなし。録音は継続する)
+- **`MaiTranscribeClient` のバッファ方式**: セッション全体の生PCMを
+  `_buffer` に保持し続け、どこまで送ったかを `_sent_offset_bytes` で覚える。
+  送信済みの分を捨てないのは、無音区切りの直前で語頭が欠けた場合に前の区間へ
+  さかのぼって切り出せる余地を残すため。バッファは `stop()`/`start()` で
+  解放され、1セッション上限 (10分/16kHz/16bit/mono ≒ 19MB) を超えない。
+  `threading.Lock` はメモリ操作 (追記・切り出し・オフセット更新) のみを
+  保護し、WAV化・HTTP送信はロックの外で行う (`feed_audio` は sounddevice の
+  コールバックスレッド、`flush`/`stop` はイベントループから呼ばれる)
+- **前方無音の削除**: VAD の `last_speech_start_sample` を
+  `trim_before_sample` として渡す。発話が既に送信済みの区間で始まっていた
+  場合は再送しないよう送信済み位置を優先する (`max()` を取る)
+- **flush の直列化**: `AudioPipelineCoordinator` が `asyncio.Lock` で
+  flush 全体を囲む。並走するとレスポンス順の揺れで `SegmentAccumulator` が
+  到着順に振るセグメントIDの順序が崩れるため。`TranscriptionQueue` が
+  単一ワーカーでセッション間の順序を守るのと同じ考え方をセッション内に
+  適用している
+- **`stop()` は進行中の flush を待つ**: 監視タスクを止める前に
+  `_flush_lock` を取得する。送信中にキャンセルすると、送信済みオフセットだけ
+  が進んでその区間のテキストが失われる (`stop()` の最終送信も拾えない)。
+  待ち時間は flush 自身の `mai_timeout_sec` で上限が付く
+
+`SegmentAccumulator`/SSE/フロントエンドは変更していない。`recognized` を
+複数回受け取って逐次追記する経路は元から成立しており、flush 由来のイベントも
+同じ経路を通る。
+
+## 動的設定 (DynamicSettings)
+
+設定値は反映タイミングの違いで2種類に分かれる。
+
+| | `Settings` | `DynamicSettings` |
+|---|---|---|
+| 構築 | 起動時に環境変数から1回 (`frozen`) | 起動時にJSONCから読み、実行中に差し替え可 (`frozen`) |
+| 変更手段 | 環境変数 + プロセス再起動 | ブラウザの設定タブ (`PUT /api/settings`) |
+| 反映 | 再起動時 | 次回利用時 (セッション開始時/校正実行時/SSE接続時/shutdown時) |
+
+`src/shared/config/` に配置する (どの業務コンテキストにも属さない横断的関心事)。
+`ports.py` の `SettingsRepositoryPort` (`get`/`update`) をポートとし、
+`JsoncSettingsRepository` が `~/.voice-input/settings.jsonc` へ永続化する。
+
+- 現在値はメモリ上に保持し、`get()` はファイルI/Oを伴わない
+- ファイル不在時は各項目の説明コメント付きの雛形を書き出す。パース失敗・
+  バリデーション違反時は警告ログを出して既定値へフォールバックする
+  (`_load_secrets_or_empty` と同じ「起動を止めない」方針)
+- `update()` はファイル全体を書き直すため、ユーザーが書いたコメントは失われる
+  (設定画面経由の更新なので許容する)
+- クロスフィールド制約: `segment_silence_sec < silence_timeout_sec`。逆転すると
+  セグメントが1度も切り出されないままセッションがタイムアウトする
+
+**動的化の対象**: `max_session_duration_sec` / `silence_timeout_sec` /
+`segment_silence_sec` / `vad_threshold` / `mai_locale` / `mai_model_name` /
+`mai_timeout_sec` / `proofread_timeout_sec` / `shutdown_delay_sec` /
+`sse_keepalive_sec`
+
+**`Settings` に残すもの (動的化しない)**: `stt_sample_rate` (Singletonの
+`audio_capture` に紐づき、マイクストリーム再起動が必要)、`proofread_prompt` /
+`gemini_model` (校正クライアントのSingleton生成に紐づく)、`vertex_location`
+(認証クライアントの再構築が必要)、`server_host` / `server_port` (TCP bindは
+プロセス起動時に確定し原理的に変更不可)、`history_dir` (実行中の切り替えは
+データ配置の整合性リスクが高い)。
+
+**「次回利用時に反映」の実現方法**: 消費側は値をコピーして保持せず、利用する
+瞬間に `settings_repository.get()` を呼ぶ。`vad_factory`/`stt_engine_factory`
+はファクトリ関数が `settings_repository` を受け取り、生成時に `get()` を読む。
+Singleton の `AudioPipelineCoordinator` には値ではなく
+`segment_silence_sec_fn` (callable) を渡し、セッション開始時に評価する
+(値を直接束縛すると起動時の値に固定される)。
 
 ## データフロー
 
@@ -183,6 +301,12 @@ pyperclip でクリップボードにコピー
   マイク -> sounddevice(PCM, 常駐ストリーム) -> MAI Transcribe (バッファリング)
                                              -> SpeechActivityDetector (Silero VAD)
 
+[録音中: 発話終了から3秒無音 (SegmentSilenceMonitor)]
+  未送信区間を切り出して MAI Transcribe へ送信 (stt_client.flush())
+    -> recognized -> SSE("recognized", session_id, seg-N)
+       -> ブラウザ: textarea に逐次追記 (録音を止めずにテキストが確定していく)
+    -> 無音が続く間は3秒おきに再発火するが、送るものがなければ何もしない
+
 [再トグル or 10分経過 or 発話終了から2分間無音]
   録音停止 (STTのstop()は呼ばない)
     -> stt_client と専用event_queueをTranscriptionQueueにジョブとしてenqueue
@@ -190,7 +314,8 @@ pyperclip でクリップボードにコピー
     -> SSE("status", recording=false) をブラウザに送信
 
 [レーン2: 文字起こしワーカー (TranscriptionQueue, FIFO・単一ワーカーで直列処理)]
-  ジョブをdequeue -> MAI Transcribe バッチ認識 (stt_client.stop())
+  ジョブをdequeue -> MAI Transcribe バッチ認識 (stt_client.stop() が
+                     flush 済みを除いた残りを最終セグメントとして送信)
     -> recognized  -> SSE("recognized", session_id, seg-N)
        -> ブラウザ: session_idごとの表示キューに蓄積 (先頭セッションのみtextareaに反映)
     -> session_end (session_id付き) をブラウザに送信
@@ -248,20 +373,27 @@ class FinalizedSession(BaseModel):
 {"id":"d4e5f6","started_at":"2026-04-04T14:32:00","ended_at":"2026-04-04T14:32:30","timed_out":false,"text":"明日の会議の資料を準備しておいてください。よろしくお願いします。","segments":[{"text":"明日の会議の資料を準備しておいてください。"},{"text":"よろしくお願いします。"}]}
 ```
 
-## 定数（設定可能）
+## 設定値の既定値
+
+反映タイミングの違いによる2種類の区分は「動的設定 (DynamicSettings)」章を参照。
 
 ```python
-MAX_SESSION_DURATION_SEC = 600       # 最大セッション時間 (10分)
-SILENCE_TIMEOUT_SEC = 120            # 発話終了からの無音タイムアウト (2分)
+# --- DynamicSettings (~/.voice-input/settings.jsonc、設定タブから変更可能) ---
+max_session_duration_sec = 600       # 最大セッション時間 (10分)
+silence_timeout_sec = 120            # 発話終了からの無音タイムアウト (2分)
+segment_silence_sec = 3.0            # 無音区切り (逐次文字起こし)。上記より小さいこと
+vad_threshold = 0.5                  # 発話判定の閾値 (0.0〜1.0)
+mai_locale = "ja"                    # 認識ロケール
+mai_model_name = "mai-transcribe-1"  # 認識モデル
+mai_timeout_sec = 60                 # 認識APIタイムアウト
+proofread_timeout_sec = 15           # 校正APIタイムアウト
+shutdown_delay_sec = 0.5             # 終了リクエストからプロセス終了までの遅延
+sse_keepalive_sec = 15               # SSEキープアライブ送信間隔
+
+# --- Settings (環境変数、変更には再起動が必要) ---
 STT_SAMPLE_RATE = 16000              # 音声サンプルレート
-
-# --- VAD (Silero) ---
-VAD_THRESHOLD = 0.5                  # 発話判定の閾値
-
-# --- 校正 ---
 VERTEX_LOCATION = "global"               # Vertex AI エンドポイント (preview モデルはグローバルのみ)
 GEMINI_MODEL = "gemini-3.1-flash-lite-preview"  # 校正用モデル
-PROOFREAD_TIMEOUT_SEC = 15           # 校正 API タイムアウト
 ```
 
 ## アーキテクチャ層構成
@@ -277,7 +409,7 @@ dictation/
 ├── domain/            # RecordingSession, Segment, TranscriptionJob, 各種ポート (ABC)
 ├── application/        # RecordingSessionService, AudioPipelineCoordinator,
 │                        # SttEventRelay, SegmentAccumulator, TranscriptionQueue,
-│                        # SessionTimeoutMonitor
+│                        # SessionTimeoutMonitor, SegmentSilenceMonitor
 └── infrastructure/     # sounddevice実装, MaiTranscribeClient,
                          # SileroSpeechActivityDetector, SSEBroadcaster
 
@@ -291,7 +423,9 @@ proofreading/
 ├── application/        # ProofreadTextUseCase
 └── infrastructure/     # VertexGeminiProofreader
 
-shared/                 # Settings, Secrets, ProcessShutdownerPort (横断的)
+shared/                 # Settings, Secrets, DynamicSettings +
+                         # SettingsRepositoryPort/JsoncSettingsRepository,
+                         # ProcessShutdownerPort (横断的)
 presentation/           # FastAPIルート・スキーマ (HTTP変換のみ)
 ```
 
@@ -387,7 +521,7 @@ Containerから取得したインスタンスを `app.state` に明示的に代�
 | 外部サービス | MAI Transcribe (Azure AI)、Google Cloud Vertex AI |
 | 認証情報管理 | AWS SSM Parameter Store (SecureString) を AWS SSO セッション経由で取得。SSM パラメータ名は環境変数 `FRAETOR_SSM_*` で指定。起動時に1回取得 |
 | パッケージ管理 | uv (pyproject.toml + uv.lock) |
-| 設定ファイル | 各種タイムアウト等は定数で管理 |
+| 設定ファイル | 起動時固定の値は環境変数 (`Settings`)。実行中に変更できる値は `~/.voice-input/settings.jsonc` (`DynamicSettings`、設定タブから編集)。詳細は「動的設定」章 |
 
 ## 将来課題
 
