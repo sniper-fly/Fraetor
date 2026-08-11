@@ -39,7 +39,10 @@ from src.transcript_history.infrastructure.pyperclip_clipboard import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.dictation.domain.ports import AudioCapturePort
+    from src.shared.config.ports import SettingsRepositoryPort
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,18 @@ def _settings_file_path(history_dir: Path) -> Path:
     一緒に隔離されるため、テスト間で設定が漏れない。
     """
     return history_dir / "settings.jsonc"
+
+
+def _segment_silence_sec_fn(
+    settings_repository: SettingsRepositoryPort,
+) -> Callable[[], float]:
+    """無音区切り閾値を都度読む callable を返す。
+
+    `AudioPipelineCoordinator` は Singleton なので、値を直接渡すと起動時の
+    値に固定されてしまう。セッション開始時に評価される callable を渡すことで
+    「次のセッションから反映」を成立させる。
+    """
+    return lambda: settings_repository.get().segment_silence_sec
 
 
 def _create_proofreader(
@@ -139,6 +154,9 @@ class Container(containers.DeclarativeContainer):
         audio_capture=audio_capture,
         stt_engine_factory=stt_engine_factory,
         vad_factory=vad_factory,
+        segment_silence_sec_fn=providers.Callable(
+            _segment_silence_sec_fn, settings_repository=settings_repository
+        ),
     )
 
     segment_accumulator = providers.Singleton(

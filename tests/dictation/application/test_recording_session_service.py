@@ -49,12 +49,16 @@ def _make_service(
     )
     mock_vad = MagicMock()
     mock_vad.last_speech_time = time.monotonic()
+    mock_vad.last_speech_start_sample = None
     mock_audio = MagicMock()
     mock_audio.start_recording = AsyncMock(side_effect=audio_start_side_effect)
     mock_audio.stop_recording = AsyncMock()
 
+    # 無音区切りの逐次 flush はここでの検証対象ではないため、テスト中に
+    # 発火しない閾値を渡して切り離す (検証は
+    # tests/dictation/application/test_audio_pipeline_coordinator.py)。
     audio_pipeline = AudioPipelineCoordinator(
-        mock_audio, lambda _q: mock_stt, lambda: mock_vad
+        mock_audio, lambda _q: mock_stt, lambda: mock_vad, lambda: 3600.0
     )
     accumulator = SegmentAccumulator(app_state.broadcaster)
     event_relay = SttEventRelay(app_state, accumulator)
@@ -215,6 +219,50 @@ class TestSttEventProcessing:
         await queue.shutdown(timeout=1)
 
         assert app_state.pending_sessions[-1].full_text == "こんにちは。お元気ですか。"
+
+
+class TestIncrementalSegments:
+    """無音区切りの flush が既存の追記経路をそのまま通ることを確認する。
+
+    プラン §5 の「`SegmentAccumulator`/SSE/フロントエンドは変更不要」という
+    前提が、実際に flush 由来のイベントでも成立していることを担保する。
+    """
+
+    async def test_flushed_segments_are_appended_in_order_during_recording(
+        self,
+    ) -> None:
+        """録音中の flush 結果が、到着順にセグメントとして追記・配信される。"""
+        service, app_state, _stt, queue, _repo = _make_service()
+        recognized: list[dict[str, object]] = []
+        subscriber = app_state.broadcaster.subscribe()
+        await service.start_session()
+
+        event_queue = service._audio_pipeline.event_queue
+        assert event_queue is not None
+        # flush が recognized を投入する状況を再現する (STT 側の送信は
+        # tests/.../test_mai_transcribe_client.py で検証済み)
+        for text in ("1つ目。", "2つ目。", "3つ目。"):
+            event_queue.put_nowait({"type": "recognized", "text": text})
+            await asyncio.sleep(0.01)
+
+        session = app_state.current_session
+        assert session is not None
+        assert [s.id for s in session.segments] == [0, 1, 2], "録音中に逐次追記される"
+        assert [s.text for s in session.segments] == ["1つ目。", "2つ目。", "3つ目。"]
+
+        while not subscriber.empty():
+            event = subscriber.get_nowait()
+            if event["event"] == "recognized":
+                recognized.append(json.loads(event["data"]))
+
+        assert [d["segment_id"] for d in recognized] == [0, 1, 2], (
+            "セグメントIDが到着順に配信される"
+        )
+
+        await service.stop_session()
+        await queue.shutdown(timeout=1)
+
+        assert app_state.pending_sessions[-1].full_text == "1つ目。2つ目。3つ目。"
 
 
 class TestSessionTimeout:

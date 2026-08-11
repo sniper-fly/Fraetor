@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import threading
 import wave
 
 from azure.ai.transcription import TranscriptionClient
@@ -25,10 +26,16 @@ _PCM_CHANNELS = 1
 class MaiTranscribeClient(SttEnginePort):
     """MAI-Transcribe-1 によるバッチ文字起こしクライアント。
 
-    feed_audio で蓄積した PCM を stop() 時に WAV 化し、
-    Azure Foundry の LLM Speech API へ一括送信する。
-    結果は combined_phrases[0].text を recognized イベントとして
-    queue に 1 件だけ投入する。
+    feed_audio で蓄積した PCM を、無音区切りごとの `flush()` と最終の `stop()`
+    で WAV 化し、Azure Foundry の LLM Speech API へ送信する。結果は
+    combined_phrases[0].text を recognized イベントとして送信1回ごとに
+    queue へ投入する (1セッションで複数件になる)。
+
+    セッション全体の生 PCM を `_buffer` に保持し続け、どこまで送ったかを
+    `_sent_offset_bytes` で覚える方式を採る。「送信済みの分を捨てる」形に
+    しないのは、無音区切りの直前で語頭が欠けた場合に前の区間へさかのぼって
+    切り出せる余地を残すため。バッファは `stop()` で必ず解放され、1セッション
+    上限 (10分/16kHz/16bit/mono ≒ 19MB) を超えて増えることはない。
     """
 
     def __init__(
@@ -44,6 +51,11 @@ class MaiTranscribeClient(SttEnginePort):
     ) -> None:
         super().__init__(stt_event_queue)
         self._buffer = bytearray()
+        self._sent_offset_bytes = 0
+        # feed_audio は sounddevice のコールバックスレッドから、flush/stop は
+        # イベントループから呼ばれる。バッファとオフセットの整合を守るために
+        # メモリ操作だけを排他する (WAV化・HTTP送信はロックの外)。
+        self._lock = threading.Lock()
         self._client = TranscriptionClient(
             endpoint=endpoint,
             credential=AzureKeyCredential(api_key),
@@ -58,39 +70,78 @@ class MaiTranscribeClient(SttEnginePort):
         return _CAPABILITIES
 
     async def start(self) -> None:
-        self._buffer.clear()
+        with self._lock:
+            self._buffer.clear()
+            self._sent_offset_bytes = 0
         logger.info("MAI Transcribe started (buffering)")
 
     def feed_audio(self, buffer: bytes) -> None:
-        self._buffer.extend(buffer)
+        with self._lock:
+            self._buffer.extend(buffer)
+
+    async def flush(self, *, trim_before_sample: int | None) -> None:
+        """未送信区間を1セグメントとして送信する。バッファは解放しない。"""
+        wav_bytes = self._extract_pending_wav(trim_before_sample)
+        if not wav_bytes:
+            return
+        text = await self._transcribe(wav_bytes, phase="flush")
+        logger.info("MAI Transcribe flushed (chars=%d)", len(text or ""))
 
     async def stop(self) -> None:
-        wav_bytes = self._build_wav()
-        self._buffer.clear()
+        # 残っている未送信分をすべて最終セグメントとして送る。無音区切りが
+        # 一度も発生しなかったセッションでは、これが唯一の送信になる。
+        wav_bytes = self._extract_pending_wav(trim_before_sample=None)
+        with self._lock:
+            self._buffer.clear()
+            self._sent_offset_bytes = 0
         if not wav_bytes:
             logger.info("MAI Transcribe stopped (no audio)")
             return
+        text = await self._transcribe(wav_bytes, phase="stop")
+        logger.info("MAI Transcribe stopped (chars=%d)", len(text or ""))
+
+    async def _transcribe(self, wav_bytes: bytes, *, phase: str) -> str:
+        """WAV を送信し、テキストが得られれば recognized イベントを投入する。
+
+        失敗はログに記録して握り潰す (プラン: リトライなし、テキストは失う)。
+        呼び出し元は録音・後続セグメントの処理を継続する。
+        """
         try:
             text = await asyncio.wait_for(
                 asyncio.to_thread(self._transcribe_sync, wav_bytes),
                 timeout=self._timeout_sec,
             )
         except Exception:
-            logger.exception("MAI Transcribe failed")
-            return
+            logger.exception("MAI Transcribe %s failed", phase)
+            return ""
         if text:
             self._queue.put_nowait({"type": "recognized", "text": text})
-        logger.info("MAI Transcribe stopped (chars=%d)", len(text or ""))
+        return text
 
-    def _build_wav(self) -> bytes:
-        if not self._buffer:
+    def _extract_pending_wav(self, trim_before_sample: int | None) -> bytes:
+        """未送信区間を切り出して WAV 化し、送信済みオフセットを進める。
+
+        `trim_before_sample` が未送信区間の途中を指す場合はそこまでの無音を
+        捨てる。既に送信済みの位置より前を指す場合 (発話が前の区間で始まって
+        いた場合) は再送しないよう送信済み位置を優先する。
+        """
+        with self._lock:
+            start = self._sent_offset_bytes
+            if trim_before_sample is not None:
+                start = max(start, trim_before_sample * _PCM_SAMPLE_WIDTH_BYTES)
+            pending = bytes(self._buffer[start:])
+            self._sent_offset_bytes = len(self._buffer)
+        if not pending:
             return b""
+        return self._build_wav(pending)
+
+    def _build_wav(self, pcm_bytes: bytes) -> bytes:
         bio = io.BytesIO()
         with wave.open(bio, "wb") as wf:
             wf.setnchannels(_PCM_CHANNELS)
             wf.setsampwidth(_PCM_SAMPLE_WIDTH_BYTES)
             wf.setframerate(self._sample_rate)
-            wf.writeframes(bytes(self._buffer))
+            wf.writeframes(pcm_bytes)
         return bio.getvalue()
 
     def _transcribe_sync(self, wav_bytes: bytes) -> str:

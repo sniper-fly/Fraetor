@@ -75,6 +75,67 @@ class TestSileroSpeechActivityDetector:
 
         assert det.last_speech_time > t0
 
+    def test_speech_start_sample_is_none_until_speech_detected(
+        self, mock_load: MagicMock, mock_iter_cls: MagicMock
+    ) -> None:
+        """発話が一度も検出されていない間は last_speech_start_sample が None。"""
+        mock_iter = mock_iter_cls.return_value
+        mock_iter.triggered = False
+        mock_iter.return_value = None
+        det = SileroSpeechActivityDetector(_SAMPLE_RATE, _THRESHOLD)
+
+        det.feed(_silence_bytes())
+
+        assert det.last_speech_start_sample is None
+
+    def test_start_event_records_speech_start_sample(
+        self, mock_load: MagicMock, mock_iter_cls: MagicMock
+    ) -> None:
+        """start イベントの sample 位置をそのまま保持する (前方無音の削除位置)。"""
+        mock_iter = mock_iter_cls.return_value
+        mock_iter.triggered = True
+        mock_iter.return_value = {"start": 4096}
+        det = SileroSpeechActivityDetector(_SAMPLE_RATE, _THRESHOLD)
+
+        det.feed(_silence_bytes())
+
+        assert det.last_speech_start_sample == 4096
+
+    def test_start_sample_is_overwritten_by_later_speech(
+        self, mock_load: MagicMock, mock_iter_cls: MagicMock
+    ) -> None:
+        """2度目の発話開始で位置が更新される (直近の発話開始だけを保持する)。
+
+        flush は「直近の無音区間の直前の発話」を送るため、過去の start を
+        持ち続けると既に送信済みの区間を再送してしまう。
+        """
+        mock_iter = mock_iter_cls.return_value
+        mock_iter.triggered = True
+        mock_iter.return_value = {"start": 4096}
+        det = SileroSpeechActivityDetector(_SAMPLE_RATE, _THRESHOLD)
+        det.feed(_silence_bytes())
+
+        mock_iter.return_value = {"start": 32768}
+        det.feed(_silence_bytes())
+
+        assert det.last_speech_start_sample == 32768
+
+    def test_end_event_does_not_change_speech_start_sample(
+        self, mock_load: MagicMock, mock_iter_cls: MagicMock
+    ) -> None:
+        """end イベントでは開始位置を書き換えない (発話区間の先頭を保つ)。"""
+        mock_iter = mock_iter_cls.return_value
+        mock_iter.triggered = True
+        mock_iter.return_value = {"start": 4096}
+        det = SileroSpeechActivityDetector(_SAMPLE_RATE, _THRESHOLD)
+        det.feed(_silence_bytes())
+
+        mock_iter.triggered = False
+        mock_iter.return_value = {"end": 20000}
+        det.feed(_silence_bytes())
+
+        assert det.last_speech_start_sample == 4096
+
     def test_buffers_partial_chunks_until_window_size(
         self, mock_load: MagicMock, mock_iter_cls: MagicMock
     ) -> None:

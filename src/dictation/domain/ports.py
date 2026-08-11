@@ -60,10 +60,23 @@ class SttEnginePort(ABC):
         """PCM音声データを送る (16kHz/16bit/mono)。"""
 
     @abstractmethod
+    async def flush(self, *, trim_before_sample: int | None) -> None:
+        """未送信の音声のうち trim_before_sample 以降を1セグメントとして認識する。
+
+        結果は stop() と同じく recognized イベントとして queue に投入する。
+        `trim_before_sample` (セッション開始からの累積サンプル数) より前は
+        送信対象から除外する。`None` の場合は未送信分をそのまま送る。
+
+        送るべき新規音声がなければ何もしない。失敗しても例外は伝播させず、
+        そのセグメントのテキストを失うだけに留める (録音は継続する)。
+        """
+
+    @abstractmethod
     async def stop(self) -> None:
         """認識を停止する。
 
         バッチ型エンジンの場合はここで処理を実行し、結果を queue に投入する。
+        flush() 済みの区間を除いた残りが最終セグメントとして送られる。
         """
 
 
@@ -74,6 +87,15 @@ class SpeechActivityDetectorPort(ABC):
     @abstractmethod
     def last_speech_time(self) -> float:
         """最後に発話を検知した時刻 (time.monotonic())。"""
+
+    @property
+    @abstractmethod
+    def last_speech_start_sample(self) -> int | None:
+        """直近の発話開始位置 (このインスタンス生存期間の累積サンプル数)。
+
+        発話がまだ一度も検出されていない場合は None。前方の無音を送信対象から
+        削るために、STT の PCM バッファのオフセットとして使う。
+        """
 
     @abstractmethod
     def feed(self, pcm_bytes: bytes) -> None:

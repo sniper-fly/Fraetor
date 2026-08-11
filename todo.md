@@ -41,17 +41,23 @@
 ### phase3: 無音区切りによる逐次 flush
 目的: VAD の発話開始位置公開から STT の部分送信、無音監視タイマー、コーディネータ統合までを一続きで実装する。`SegmentAccumulator` / SSE / フロントエンドは変更しない (プラン §5 の通り、既存経路がそのまま機能することを既存テストで担保する)。
 
-- [ ] `src/dictation/domain/ports.py`  # last_speech_start_sample プロパティと SttEnginePort.flush を追加
-- [ ] `src/dictation/infrastructure/vad/silero_vad_detector.py`  # VADIterator の start を保持
-- [ ] `tests/dictation/infrastructure/vad/test_silero_vad_detector.py`  # 上記に対応する単体テスト
-- [ ] `src/dictation/infrastructure/stt/mai_transcribe_client.py`  # 累積バッファ + 送信済みオフセット方式へ書き換え、flush 実装、stop の最終区間処理
-- [ ] `tests/dictation/infrastructure/stt/test_mai_transcribe_client.py`  # オフセット追随・trim・no-op ガード・例外非伝播の検証
-- [ ] `src/dictation/application/segment_silence_monitor.py`  # 残り時間だけ寝る監視ループ (重複呼び出しは許容)
-- [ ] `tests/dictation/application/test_segment_silence_monitor.py`  # 上記に対応する単体テスト
-- [ ] `src/dictation/application/audio_pipeline_coordinator.py`  # SegmentSilenceMonitor 組み込みと asyncio.Lock による flush 直列化
-- [ ] `tests/dictation/application/test_audio_pipeline_coordinator.py`  # 起動/停止・flush 引数・直列化の検証
-- [ ] `src/containers.py`  # audio_pipeline_coordinator への segment_silence_sec 経路を配線
-- [ ] `tests/test_containers.py`  # 配線変更に追随
+- [x] `src/dictation/domain/ports.py`  # last_speech_start_sample プロパティと SttEnginePort.flush を追加
+- [x] `src/dictation/infrastructure/vad/silero_vad_detector.py`  # VADIterator の start を保持
+- [x] `tests/dictation/infrastructure/vad/test_silero_vad_detector.py`  # 上記に対応する単体テスト
+- [x] `src/dictation/infrastructure/stt/mai_transcribe_client.py`  # 累積バッファ + 送信済みオフセット方式へ書き換え、flush 実装、stop の最終区間処理
+- [x] `tests/dictation/infrastructure/stt/test_mai_transcribe_client.py`  # オフセット追随・trim・no-op ガード・例外非伝播の検証
+- [x] `src/dictation/application/segment_silence_monitor.py`  # 残り時間だけ寝る監視ループ (重複呼び出しは許容)
+- [x] `tests/dictation/application/test_segment_silence_monitor.py`  # 上記に対応する単体テスト
+- [x] `src/dictation/application/audio_pipeline_coordinator.py`  # SegmentSilenceMonitor 組み込みと asyncio.Lock による flush 直列化
+- [x] `tests/dictation/application/test_audio_pipeline_coordinator.py`  # 起動/停止・flush 引数・直列化の検証
+- [x] `src/containers.py`  # audio_pipeline_coordinator への segment_silence_sec 経路を配線
+- [x] `tests/test_containers.py`  # 配線変更に追随
+- [x] `tests/dictation/application/test_recording_session_service.py`  # プラン外。§5「追記経路は変更不要」が flush 由来イベントでも成立することの統合検証
+
+プラン (§4.1) からの逸脱: `stop()` は監視停止の前に `_flush_lock` を取得し、進行中の
+flush の完了を待つ。プラン通りに `monitor.stop()` を先に呼ぶと、送信中の flush が
+`CancelledError` で中断され、STT の送信済みオフセットだけが進んでその区間のテキストが
+失われる (`await` 中のタスクキャンセルは shield なしでは即座に伝播する)。
 
 ### phase4: 設定 API・設定画面・ドキュメント整合
 目的: 動的設定をブラウザから編集できるようにし、設計ドキュメントを実装に追随させる。

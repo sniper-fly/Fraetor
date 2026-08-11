@@ -131,3 +131,16 @@ class TestSettingsRepositoryWiring:
         use_case = container.proofread_text_use_case()
 
         assert use_case._settings_repository is container.settings_repository()
+
+    def test_segment_silence_sec_is_read_at_call_time(self) -> None:
+        """コーディネータは Singleton なので、閾値は callable 経由で都度読む。
+
+        値を直接束縛すると起動時の値に固定され、設定変更が反映されない。
+        """
+        container = Container()
+        repo = container.settings_repository()
+        coordinator = container.audio_pipeline_coordinator()
+
+        repo.update(DynamicSettings(segment_silence_sec=1.5))
+
+        assert coordinator._segment_silence_sec_fn() == 1.5
