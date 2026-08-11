@@ -80,3 +80,20 @@ uv run pytest tests/e2e --ignore=tests/e2e/test_browser_ui.py
 uv run pytest tests/e2e/test_browser_ui.py
 ```
 
+AWS プロファイルは環境変数で明示指定する。シェルに別プロファイルが設定されて
+いると `.env` の値では上書きされず (`load_dotenv` の既定は `override=False`)、
+SSM の `GetParameters` が `AccessDeniedException` になってサーバーが起動できず、
+クラウド通信を伴うテストがまとめて失敗する。
+
+```bash
+AWS_PROFILE=<プロファイル名> uv run pytest tests/e2e --ignore=tests/e2e/test_browser_ui.py
+```
+
+### 既知のプラットフォーム制約
+
+`TestAudioDeviceFailure::test_missing_audio_device_broadcasts_error` は
+**Linux 専用**。壊れたデバイスの再現に `ALSA_CONFIG_PATH` を使うため、
+macOS (CoreAudio) ではこの環境変数が無視されてマイクが正常に開き、期待する
+`error` イベントが発生せず必ず失敗する。macOS ではこの1件の失敗は既知として
+扱う。
+
