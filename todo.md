@@ -68,7 +68,10 @@ flush の完了を待つ。プラン通りに `monitor.stop()` を先に呼ぶ�
 - [x] `src/templates/index.html`  # 「設定」タブ追加、switchTab の3値対応、loadSettings / saveSettings
 - [x] `tests/presentation/routes/test_page_routes.py`  # プラン外。JS の SETTINGS_FIELDS / TABS が DynamicSettings と DOM に一致することの検証
 - [x] `design.md`  # 定数章・VAD 章・データフロー章の更新と「動的設定」章・「逐次文字起こし」章の新設
-- [ ] 実装完了後、E2E テスト (特に `tests/e2e/test_mic_and_vad.py` / `test_mai_transcribe.py`) の実行可否をユーザーに確認する
+- [x] 実装完了後、E2E テスト (特に `tests/e2e/test_mic_and_vad.py` / `test_mai_transcribe.py`) の実行可否をユーザーに確認する
+- [x] `tests/e2e/test_mic_and_vad.py`  # プラン外。既存の recognized>=1 の検証では「逐次分割そのもの」を証明できていなかったため、
+      同一セッション内で複数 recognized (segment_id 連番) が届くことを検証するテストを追加した
+- [x] `tests/e2e/conftest.py`  # プラン外。`fraetor_server_with_audio` の型を `Callable[..., str]` に修正 (kwargs 渡しが型的に矛盾していた)
 - [ ] 3秒以上の無音を挟んだ発話で逐次追記されること・リードタイム短縮を実機で手動確認する
 
 プラン (§7.1) からの逸脱: `PUT /api/settings` はボディを型付きパラメータ
@@ -82,6 +85,14 @@ flush の完了を待つ。プラン通りに `monitor.stop()` を先に呼ぶ�
 テストを `test_page_routes.py` に追加した (ブラウザ起動不要)。
 
 ---
+
+## 保留中の検討課題
+
+- [ ] FastAPIルートで `model_validate()` を手動呼びすると `ValidationError` が捕捉されず500になる問題のlint化
+  - 現状: `settings_routes.py` は型付きパラメータ (`body: DynamicSettings`) 化済みで正しいが、`proofread_routes.py:28,37` の2箇所はまだ手動 `model_validate()` を呼んでおり違反している(この2箇所は軽微な実装修正としてその場で直せる)
+  - 課題: `ruff`/`mypy` にはこのFastAPI固有パターンを検知するルールが無く、Fraetorには既存のカスタムlint基盤・PostToolUse/Stopの品質チェックhookも未整備(csp-voc-lambdaの`check_code_quality.sh`相当が無い)
+  - 検討したい対応案: (A) `.semgrep/warn-manual-model-validate.yml` を1本書いてAST的に検出(semgrepという新規軽量依存が1つ増える) (B) `flake8`のカスタムプラグイン基盤をFraetorに新設し同パターンを検出(Aより新設コストが高いが、csp-voc-lambdaの`tools/`配下の既存プラグインと同型にできる)。**Bの方向で進める。** ただしプラグイン基盤の新設は実装コストが軽くないため、まずこの起票で留め、着手は別途判断する
+  - 背景: いずれの案でも、まずcsp-voc-lambdaと同様にPostToolUse/Stopでruff+mypyを自動実行するhookをFraetorに整備するのが前提として先にある可能性がある(このissue固有の話ではなくFraetorのlint運用全体の話)
 
 ## 完了済み: 初期実装 (Phase 1-9)
 

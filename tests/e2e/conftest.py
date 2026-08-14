@@ -203,12 +203,13 @@ def fraetor_audio_server_handle(tmp_path: Path) -> Generator[AudioServerHandle]:
 @pytest.fixture
 def fraetor_server_with_audio(
     fraetor_audio_server_handle: AudioServerHandle,
-) -> Callable[[str], str]:
+) -> Callable[..., str]:
     """録音済み WAV を「マイク入力」として使う実サーバーを起動するファクトリ。
 
     戻り値の関数は `fixtures/audio/` 配下のファイル名を受け取り、
-    起動後のベースURLを返す。プロセス自体にアクセスしたいテストは
-    `fraetor_audio_server_handle` を直接使う。
+    起動後のベースURLを返す。`settings_overrides` などのキーワード引数も
+    そのまま `AudioServerHandle.start()` に渡せる。プロセス自体に
+    アクセスしたいテストは `fraetor_audio_server_handle` を直接使う。
     """
     return fraetor_audio_server_handle.start
 

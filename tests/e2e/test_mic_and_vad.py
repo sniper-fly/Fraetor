@@ -90,6 +90,39 @@ class TestFileAudioAndVad:
         assert status_events == [True, False]
         _print_recognized("02_multiple_utterances.wav", events)
 
+    async def test_multiple_utterances_are_flushed_as_separate_segments(
+        self, fraetor_server_with_audio: Callable[..., str]
+    ) -> None:
+        """02: 発話間のポーズで逐次flushされ、1セッション中に複数recognizedが届く
+
+        `02_multiple_utterances.wav` (README記載の目安は0.5秒程度のポーズだが、
+        実測では発話者によって1秒前後になり得る) に対し、`segment_silence_sec`
+        をE2E既定の1.0秒より十分短く (0.3秒) 上書きすることで、ポーズの実測値
+        のばらつきに関わらず確実にポーズ区間をまたいでflushが発火する状態を作る。
+        上の `test_multiple_utterances_with_short_pause_stay_in_one_session` は
+        セッションが割れないことを検証するのに対し、本テストはセッション内で
+        セグメントが分かれて届くこと (逐次文字起こし本体) を検証する。
+        """
+        base_url = fraetor_server_with_audio(
+            "02_multiple_utterances.wav",
+            settings_overrides={"segment_silence_sec": 0.3},
+        )
+
+        events = await _run_session(base_url)
+
+        recognized = [
+            json.loads(e["data"]) for e in events if e["event"] == "recognized"
+        ]
+        assert len(recognized) >= 2, (
+            "ポーズによる逐次flushで複数のrecognizedが届くはずが1件以下だった"
+        )
+        session_ids = {r["session_id"] for r in recognized}
+        assert len(session_ids) == 1, "全recognizedは同一セッションに属するはず"
+        assert [r["segment_id"] for r in recognized] == list(range(len(recognized))), (
+            "segment_idは到着順に0から連番のはず"
+        )
+        _print_recognized("02_multiple_utterances.wav", events)
+
     async def test_short_utterance_is_recognized(
         self, fraetor_server_with_audio: Callable[[str], str]
     ) -> None:
