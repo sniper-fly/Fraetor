@@ -219,8 +219,14 @@ pyperclip でクリップボードにコピー
   `SessionTimeoutMonitor` と同じ「残り時間だけ `asyncio.sleep` して起きる」
   方式。ただし1セッション中に何度も発火するため、発火後もループを続ける。
   無音が続く間は `segment_silence_sec` おきに発火し続けるが、「送るものが
-  あるか」の判定は送信済み位置を知っているSTTクライアント側のno-opガードに
-  委ねる (監視側が状態を二重に持たない)
+  あるか」の判定は `AudioPipelineCoordinator._flush_segment` が
+  `_pending_speech_start_sample is None` (前回 flush 以降、新しい発話を
+  一度も検出していない) かどうかで行う。`_on_audio_chunk` は VAD の検知
+  結果に関わらずあらゆる音声チャンクを `feed_audio` に流すため、STTクライアント
+  側の「新しいバイトがあるか」というno-opガードは無音のみの区間では機能しない
+  (無音のPCM自体は増え続けるため)。「新しい発話があったか」を知っている
+  コーディネーターが判定を持つ必要がある (実際にこの判定が漏れており、
+  無音中もAPI呼び出しが続く不具合が発生したため修正した経緯がある)
 - **`SttEnginePort.flush(trim_before_sample)`**: 未送信区間のうち
   `trim_before_sample` 以降を1セグメントとして送信する。`stop()` と同じく
   `recognized` イベントをキューに投入する。失敗しても例外は伝播させず、

@@ -178,17 +178,20 @@ class TestSegmentFlush:
     async def test_reads_segment_silence_sec_at_session_start(self) -> None:
         """閾値はセッション開始時に読む (設定変更が次セッションから反映される)。"""
         mock_stt, mock_vad, mock_audio = _setup_mocks()
+        mock_vad.last_speech_start_sample = 1000
         current = 3600.0
         coordinator = AudioPipelineCoordinator(
             mock_audio, lambda _q: mock_stt, lambda: mock_vad, lambda: current
         )
         await coordinator.start()
+        coordinator._on_audio_chunk(b"chunk")  # 送るべき発話がある状態を作る
         await asyncio.sleep(0.1)
         assert mock_stt.flush.await_count == 0, "1回目は長い閾値なので発火しない"
         await coordinator.stop()
 
         current = 0.05
         await coordinator.start()
+        coordinator._on_audio_chunk(b"chunk")
         await asyncio.sleep(0.1)
         await coordinator.stop()
 
@@ -205,8 +208,37 @@ class TestSegmentFlush:
 
         mock_stt.flush.assert_not_awaited()
 
+    async def test_no_flush_during_silence_only_period(self) -> None:
+        """新しい発話が一度もない間は flush 自体を呼ばない (無音のみを送らない)。
+
+        `_on_audio_chunk` は VAD の検知結果に関わらずあらゆる音声チャンクを
+        `feed_audio` に流すため、STT クライアント側の「新しいバイトがあるか」
+        という no-op ガードは無音のみの区間では機能しない (無音のPCMそのものは
+        増え続けるため)。「送るべき新しい発話があるか」を判定できるのは
+        コーディネーターだけなので、ここで無音のみのflush呼び出し自体を
+        抑止する必要がある (実機で無音中に一定間隔でAPI呼び出しが発生し
+        続けていた不具合の回帰確認)。
+        """
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        coordinator = _make_coordinator(mock_audio, mock_stt, mock_vad)
+        await coordinator.start()
+
+        # 発話を検知しないまま音声チャンクだけが流れ続ける状態を模す。
+        coordinator._on_audio_chunk(b"silence-chunk")
+        coordinator._on_audio_chunk(b"silence-chunk")
+
+        await coordinator._flush_segment()
+
+        mock_stt.flush.assert_not_awaited()
+
     async def test_concurrent_flushes_are_serialized(self) -> None:
-        """flush の並走を防ぐ (レスポンス順の入れ替わりでセグメント順序が崩れる)。"""
+        """flush の並走を防ぐ (レスポンス順の入れ替わりでセグメント順序が崩れる)。
+
+        2回とも送るべき発話がある状態を作る。1回目が発話Aの分を消費して
+        `_pending_speech_start_sample` をリセットした後に発話Bを検出させ、
+        2回目が正しくBの分を対象にする (でなければ2回目はno-opで即returnし、
+        直列化の検証にならない)。
+        """
         mock_stt, mock_vad, mock_audio = _setup_mocks()
         events: list[str] = []
 
@@ -219,7 +251,16 @@ class TestSegmentFlush:
         coordinator = _make_coordinator(mock_audio, mock_stt, mock_vad)
         await coordinator.start()
 
-        await asyncio.gather(coordinator._flush_segment(), coordinator._flush_segment())
+        mock_vad.last_speech_start_sample = 1000
+        coordinator._on_audio_chunk(b"chunk-a")
+        first = asyncio.create_task(coordinator._flush_segment())
+        await asyncio.sleep(0)  # first がロック内で発話Aの分を消費するまで進める
+
+        mock_vad.last_speech_start_sample = 5000
+        coordinator._on_audio_chunk(b"chunk-b")
+        second = asyncio.create_task(coordinator._flush_segment())
+
+        await asyncio.gather(first, second)
 
         assert events == ["enter", "exit", "enter", "exit"]
 
@@ -236,6 +277,8 @@ class TestSegmentFlush:
         mock_stt.flush = AsyncMock(side_effect=slow_flush)
         coordinator = _make_coordinator(mock_audio, mock_stt, mock_vad)
         await coordinator.start()
+        mock_vad.last_speech_start_sample = 1000
+        coordinator._on_audio_chunk(b"chunk")
         flushing = asyncio.create_task(coordinator._flush_segment())
         await asyncio.sleep(0)
 

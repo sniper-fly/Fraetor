@@ -139,13 +139,23 @@ class AudioPipelineCoordinator:
     async def _flush_segment(self) -> None:
         """無音区切り時に、まだ送信していない最初の発話開始位置から送信する。
 
+        `_pending_speech_start_sample` が `None` (前回 flush 以降、新しい
+        発話が一度も検出されていない) なら送信せずに return する。
+        `_on_audio_chunk` は VAD の検知結果に関わらずあらゆる音声チャンクを
+        `feed_audio` に流すため、無音が続く間も STT クライアント側のバッファは
+        (無音の) PCM で増え続ける。STT クライアント自身の no-op ガードは
+        「新しいバイトがあるか」しか見ていないため、無音のみの区間でも
+        新しいバイトは常に存在し、`if not pending` には引っかからない。
+        「新しい発話があったか」を知っているのはこのコーディネーターだけ
+        なので、ここで判定する必要がある。
+
         `trim_before_sample` の評価と `_pending_speech_start_sample` の
         リセットは HTTP 送信 (`await`) より前に行う。送信中に次の発話が
         始まっても、それは次回の flush 対象として正しく追跡されるように
         するため (送信中に読むと、その間に上書きされた値を拾ってしまう)。
         """
         stt_client = self._stt_client
-        if stt_client is None:
+        if stt_client is None or self._pending_speech_start_sample is None:
             return
         async with self._flush_lock:
             trim_before_sample = self._pending_speech_start_sample
