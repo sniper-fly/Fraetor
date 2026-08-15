@@ -197,11 +197,13 @@ pyperclip でクリップボードにコピー
   軽いため、別スレッド/非同期化は行わない
 - VAD推論の例外はログに記録して握り潰し、録音・STTには伝播させない
 - 無音タイムアウト用の `last_speech_time` (`time.monotonic()` 基準) に加え、
-  逐次文字起こしの前方無音削除用に `last_speech_start_sample` を公開する。
+  `last_speech_start_sample` (直近に検出した発話開始位置) を公開する。
   `VADIterator` が発話開始時に返す `start` (= `speech_pad_ms` 分さかのぼった
-  累積サンプル位置) をそのまま保持する。基準はこのVADインスタンスに投入した
-  累積サンプル数で、STTへ渡すPCMと同一ストリームなので、`* 2` (16bit) で
-  そのままバッファのバイトオフセットに換算できる。発話未検出時は `None`
+  累積サンプル位置) をそのまま保持し、新しい発話を検出するたびに上書きする。
+  基準はこのVADインスタンスに投入した累積サンプル数で、STTへ渡すPCMと
+  同一ストリームなので、`* 2` (16bit) でそのままバッファのバイトオフセット
+  に換算できる。発話未検出時は `None`。この値は「直近の発話開始位置」
+  であり「未送信区間の先頭」ではない点に注意 (詳細は「逐次文字起こし」章)
 - モデルは JIT 形式 (`load_silero_vad()` デフォルト、torch 経由) を使用。
   torch は CPU 専用ビルドを `pyproject.toml` の `[tool.uv.sources]` /
   `[[tool.uv.index]]` で固定し、GPU 関連の巨大な依存を回避している
@@ -231,9 +233,20 @@ pyperclip でクリップボードにコピー
   `threading.Lock` はメモリ操作 (追記・切り出し・オフセット更新) のみを
   保護し、WAV化・HTTP送信はロックの外で行う (`feed_audio` は sounddevice の
   コールバックスレッド、`flush`/`stop` はイベントループから呼ばれる)
-- **前方無音の削除**: VAD の `last_speech_start_sample` を
-  `trim_before_sample` として渡す。発話が既に送信済みの区間で始まっていた
-  場合は再送しないよう送信済み位置を優先する (`max()` を取る)
+- **前方無音の削除**: VAD の `last_speech_start_sample` は「直近に検出した
+  発話の開始位置」を常に上書きする値であり、「まだ送信していない発話区間の
+  先頭」ではない。1回の flush 対象区間に (短いポーズを挟んだ) 複数の発話が
+  含まれる場合、VAD の値をそのまま使うと最後の発話より前が誤って前方無音
+  として削られてしまう (実際に発生した不具合: 無音区切りの直後に次の発話を
+  始めると前半が消える/長い文章で最後の数言しか残らない)。これを避けるため、
+  「未送信区間の最初の発話開始位置」は `AudioPipelineCoordinator` が
+  `_pending_speech_start_sample` として自前で追跡する。音声コールバック
+  (`_on_audio_chunk`) が VAD の発話開始検出直後に一度だけ書き込み (既に
+  値を保持していれば上書きしない)、`_flush_segment` が `_flush_lock`
+  取得後・HTTP送信前に読んでリセットする。VAD 自身は発話区間検出のみに
+  専念させ、「送信済み/未送信」という STT 側の概念をポートに持ち込まない
+  (発話が既に送信済みの区間で始まっていた場合に再送しないための `max()`
+  によるガードは `MaiTranscribeClient._extract_pending_wav` 側に残る)
 - **flush の直列化**: `AudioPipelineCoordinator` が `asyncio.Lock` で
   flush 全体を囲む。並走するとレスポンス順の揺れで `SegmentAccumulator` が
   到着順に振るセグメントIDの順序が崩れるため。`TranscriptionQueue` が

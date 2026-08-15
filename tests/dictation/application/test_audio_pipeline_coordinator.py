@@ -138,7 +138,7 @@ class TestStop:
 
 class TestSegmentFlush:
     async def test_silence_triggers_flush_with_speech_start_sample(self) -> None:
-        """無音区切りで、VADの発話開始位置つきで flush が呼ばれる。"""
+        """無音区切りで、未送信の発話開始位置つきで flush が呼ばれる。"""
         mock_stt, mock_vad, mock_audio = _setup_mocks()
         mock_vad.last_speech_start_sample = 4096
         coordinator = _make_coordinator(
@@ -146,6 +146,7 @@ class TestSegmentFlush:
         )
 
         await coordinator.start()
+        coordinator._on_audio_chunk(b"chunk")  # VADの発話開始検出を模す
         await asyncio.sleep(0.1)
         await coordinator.stop()
 
@@ -242,6 +243,65 @@ class TestSegmentFlush:
 
         assert completed, "flush の完了を待たずに stop() が返った"
         await flushing
+
+    async def test_flush_uses_earliest_unsent_speech_start_not_latest(self) -> None:
+        """1回のflush対象区間に複数の発話が含まれる場合、最初の(まだ送信
+        していない)発話の開始位置を使う。VADが最後に検出した発話開始位置で
+        上書きされ、それより前の発話が消えてしまう挙動 (修正前のバグ) を
+        防げていることを検証する。
+
+        実運用では「短いポーズを挟んで複数文を話し、個々のポーズは
+        segment_silence_sec未満なので発火せず、まとまった無音が来て初めて
+        flushが発火する」ときに起こっていた。長い文章で最後の数言しか
+        文字起こしされない、という報告に対応する。
+        """
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        coordinator = _make_coordinator(mock_audio, mock_stt, mock_vad)
+        await coordinator.start()
+
+        # 発話A(位置1000)を音声コールバック経由で検出 → 続けて、まだ
+        # flushされないうちに発話B(位置5000)を検出した状態を模す
+        # (どちらも未送信)。
+        mock_vad.last_speech_start_sample = 1000
+        coordinator._on_audio_chunk(b"chunk-a")
+        mock_vad.last_speech_start_sample = 5000
+        coordinator._on_audio_chunk(b"chunk-b")
+
+        await coordinator._flush_segment()
+
+        mock_stt.flush.assert_awaited_once_with(trim_before_sample=1000)
+
+    async def test_delayed_flush_does_not_pick_up_speech_started_during_lock_wait(
+        self,
+    ) -> None:
+        """flush が _flush_lock 待ち (直前のflushのHTTP応答待ちを想定) の間に
+        次の発話が始まっても、待ち中に発話開始位置が上書きされない
+        (修正前は上書きされてしまっていた)。
+
+        実運用ではMAI TranscribeのAPI応答時間 (実測1〜2.5秒程度) の間に
+        次の発話が始まると起こっていた。無音区切りの直後に次の発話を
+        始めると前半が消える、という報告に対応する。
+        """
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        coordinator = _make_coordinator(mock_audio, mock_stt, mock_vad)
+        await coordinator.start()
+
+        mock_vad.last_speech_start_sample = 1000  # 発話Aの開始位置
+        coordinator._on_audio_chunk(b"chunk-a")
+
+        # 直前のflushがまだHTTP応答待ちでロックを保持している状況を模す。
+        await coordinator._flush_lock.acquire()
+        flush_task = asyncio.create_task(coordinator._flush_segment())
+        await asyncio.sleep(0)  # flush_task がロック待ちに入るまで進める
+
+        # 待機中に発話Bが始まった。
+        mock_vad.last_speech_start_sample = 5000
+        coordinator._on_audio_chunk(b"chunk-b")
+
+        coordinator._flush_lock.release()
+        await flush_task
+
+        mock_stt.flush.assert_awaited_once_with(trim_before_sample=1000)
 
 
 class TestLastSpeechTime:

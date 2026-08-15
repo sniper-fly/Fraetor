@@ -25,8 +25,18 @@ class AudioPipelineCoordinator:
     ジョブの結果が別セッションの処理に混線することを防ぐ。
 
     無音区切りごとの逐次送信 (flush) もここで制御する。監視は
-    `SegmentSilenceMonitor` に委ね、このクラスは「VAD の発話開始位置を
-    STT に渡す」ことと「flush を直列化する」ことだけを担う。
+    `SegmentSilenceMonitor` に委ね、このクラスは「前回 flush 以降で
+    まだ送信していない最初の発話開始位置を追跡する」ことと「flush を
+    直列化する」ことを担う。
+
+    VAD の `last_speech_start_sample` は「直近に検出した発話の開始位置」を
+    常に上書きする値であり、「まだ送信していない発話区間の先頭」ではない。
+    1回の flush 対象区間に (短いポーズを挟んだ) 複数の発話が含まれる場合、
+    VAD の値をそのまま `trim_before_sample` に使うと最後の発話より前が
+    誤って前方無音として削られてしまう。これを避けるため、「未送信区間の
+    最初の発話開始位置」はコーディネーターが `_pending_speech_start_sample`
+    として自前で追跡する。VAD 自身は発話区間検出のみに専念させる
+    (「送信済み/未送信」という STT 側の概念をポートに持ち込まない)。
     """
 
     def __init__(
@@ -45,6 +55,11 @@ class AudioPipelineCoordinator:
         self._vad: SpeechActivityDetectorPort | None = None
         self._session_start_time: float = time.monotonic()
         self._segment_monitor: SegmentSilenceMonitor | None = None
+        # 前回 flush (または start()) 以降で、まだ送信していない最初の
+        # 発話開始位置。`_on_audio_chunk` (音声コールバックスレッド) が
+        # 発話開始を検出した直後に一度だけ書き込み、`_flush_segment`
+        # (イベントループ) が読んでリセットする。
+        self._pending_speech_start_sample: int | None = None
         # flush の HTTP 送信が並走すると、レスポンス順の揺れで
         # SegmentAccumulator が到着順に振るセグメント ID の順序が崩れる。
         # TranscriptionQueue がセッション間の順序を単一ワーカーで守るのと
@@ -66,6 +81,7 @@ class AudioPipelineCoordinator:
     async def start(self) -> None:
         """STT接続 → マイクキャプチャ開始。失敗時は例外を伝播する。"""
         self._session_start_time = time.monotonic()
+        self._pending_speech_start_sample = None
         self._event_queue = asyncio.Queue()
         self._stt_client = self._stt_engine_factory(self._event_queue)
         try:
@@ -114,23 +130,39 @@ class AudioPipelineCoordinator:
         self._stt_client = None
         self._event_queue = None
         self._vad = None
+        self._pending_speech_start_sample = None
 
         if stt_client is None or event_queue is None:
             return None
         return stt_client, event_queue
 
     async def _flush_segment(self) -> None:
-        """無音区切り時に、直近の発話区間を STT へ部分送信する。"""
+        """無音区切り時に、まだ送信していない最初の発話開始位置から送信する。
+
+        `trim_before_sample` の評価と `_pending_speech_start_sample` の
+        リセットは HTTP 送信 (`await`) より前に行う。送信中に次の発話が
+        始まっても、それは次回の flush 対象として正しく追跡されるように
+        するため (送信中に読むと、その間に上書きされた値を拾ってしまう)。
+        """
         stt_client = self._stt_client
-        vad = self._vad
-        if stt_client is None or vad is None:
+        if stt_client is None:
             return
         async with self._flush_lock:
-            await stt_client.flush(trim_before_sample=vad.last_speech_start_sample)
+            trim_before_sample = self._pending_speech_start_sample
+            self._pending_speech_start_sample = None
+            await stt_client.flush(trim_before_sample=trim_before_sample)
 
     def _on_audio_chunk(self, buffer: bytes) -> None:
-        """PCMチャンクをSTTとVADの両方に転送する。"""
+        """PCMチャンクをSTTとVADの両方に転送する。
+
+        VAD が発話開始を検出した直後、まだ未送信の発話開始位置を
+        保持していなければ記録する (2件目以降の発話開始は無視する。
+        「未送信区間の最初」を保持したいため上書きしない)。
+        """
         if self._stt_client:
             self._stt_client.feed_audio(buffer)
         if self._vad:
             self._vad.feed(buffer)
+            start = self._vad.last_speech_start_sample
+            if start is not None and self._pending_speech_start_sample is None:
+                self._pending_speech_start_sample = start
