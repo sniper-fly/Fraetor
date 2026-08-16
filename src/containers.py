@@ -27,6 +27,7 @@ from src.proofreading.infrastructure.vertex_gemini_proofreader import (
 from src.shared.config.jsonc_settings_repository import JsoncSettingsRepository
 from src.shared.config.secrets_loader import Secrets, load_secrets
 from src.shared.config.settings import load_settings
+from src.shared.herdr.socket_client import HerdrSocketClient
 from src.shared.process.signal_process_shutdowner import ProcessShutdowner
 from src.transcript_history.application.finalize_session_use_case import (
     FinalizeSessionUseCase,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 
     from src.dictation.domain.ports import AudioCapturePort
     from src.shared.config.ports import SettingsRepositoryPort
+    from src.shared.herdr.ports import HerdrClientPort
 
 logger = logging.getLogger(__name__)
 
@@ -209,3 +211,7 @@ class Container(containers.DeclarativeContainer):
     )
 
     shutdowner = providers.Singleton(ProcessShutdowner)
+
+    herdr_client: providers.Provider[HerdrClientPort] = providers.Singleton(
+        HerdrSocketClient
+    )

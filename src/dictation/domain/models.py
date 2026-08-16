@@ -17,6 +17,7 @@ class RecordingSession(BaseModel):
     id: str
     segments: list[Segment] = []
     started_at: datetime
+    target_pane_id: str | None = None
 
     @property
     def full_text(self) -> str:

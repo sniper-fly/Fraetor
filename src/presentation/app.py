@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from src.containers import Container
 from src.logging_config import configure_logging
 from src.presentation.routes import (
+    herdr_routes,
     history_routes,
     page_routes,
     proofread_routes,
@@ -56,6 +57,7 @@ def _build_lifespan(
         app.state.finalize_session_use_case = container.finalize_session_use_case()
         app.state.proofread_text_use_case = container.proofread_text_use_case()
         app.state.settings_repository = settings_repository
+        app.state.herdr_client = container.herdr_client()
 
         app.state.transcription_queue.start()
         logger.info("Fraetor starting")
@@ -89,6 +91,7 @@ def create_app(audio_capture: AudioCapturePort | None = None) -> FastAPI:
     app.include_router(proofread_routes.router)
     app.include_router(shutdown_routes.router)
     app.include_router(settings_routes.router)
+    app.include_router(herdr_routes.router)
     return app
 
 

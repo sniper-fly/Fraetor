@@ -48,7 +48,9 @@ class RecordingSessionService:
         self._lock = asyncio.Lock()
         self._timeout_monitor: SessionTimeoutMonitor | None = None
 
-    async def start_session(self) -> None:
+    async def start_session(
+        self, *, target_pane_id: str | None = None, herdr_requested: bool = False
+    ) -> None:
         """セッションを開始し、録音を開始する。"""
         async with self._lock:
             if self._app_state.recording:
@@ -58,6 +60,7 @@ class RecordingSessionService:
                 id=str(uuid4()),
                 segments=[],
                 started_at=datetime.now(tz=UTC),
+                target_pane_id=target_pane_id,
             )
             self._app_state.current_session = session
             self._app_state.recording = True
@@ -87,7 +90,13 @@ class RecordingSessionService:
             self._timeout_monitor.start()
 
             await self._app_state.broadcaster.broadcast(
-                "status", {"recording": True, "session_id": session.id}
+                "status",
+                {
+                    "recording": True,
+                    "session_id": session.id,
+                    "target_pane_id": target_pane_id,
+                    "herdr_requested": herdr_requested,
+                },
             )
             logger.info("Session started: %s", session.id)
 
@@ -99,7 +108,9 @@ class RecordingSessionService:
             "error", {"message": "セッション開始に失敗しました。"}
         )
 
-    async def stop_session(self, *, timed_out: bool = False) -> None:
+    async def stop_session(
+        self, *, timed_out: bool = False, herdr_send_confirmed: bool = False
+    ) -> None:
         """録音を停止し、文字起こしジョブをキューに投入する。
 
         文字起こし完了 (STTの `stop()`) を待たずに即座に返る。処理完了後の
@@ -134,7 +145,14 @@ class RecordingSessionService:
                     )
                 )
 
-            await self._app_state.broadcaster.broadcast("status", {"recording": False})
+            await self._app_state.broadcaster.broadcast(
+                "status",
+                {
+                    "recording": False,
+                    "session_id": recording_session.id if recording_session else None,
+                    "herdr_send_confirmed": herdr_send_confirmed,
+                },
+            )
 
             if recording_session:
                 logger.info(

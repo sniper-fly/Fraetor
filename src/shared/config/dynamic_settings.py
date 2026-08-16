@@ -28,6 +28,8 @@ class DynamicSettings(BaseModel):
     shutdown_delay_sec: float = Field(default=0.5, gt=0)
     sse_keepalive_sec: int = Field(default=15, gt=0)
 
+    herdr_slot_count: int = Field(default=4, gt=0)
+
     @model_validator(mode="after")
     def _validate_silence_thresholds(self) -> DynamicSettings:
         """無音区切りはセッション無音タイムアウトより短くなければならない。

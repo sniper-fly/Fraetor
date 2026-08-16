@@ -121,6 +121,50 @@ class TestStartSession:
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
+    async def test_records_target_pane_id_when_herdr_requested(self) -> None:
+        service, app_state, _, queue, _repo = _make_service()
+
+        await service.start_session(target_pane_id="w1:p1", herdr_requested=True)
+
+        session = app_state.current_session
+        assert session is not None
+        assert session.target_pane_id == "w1:p1"
+
+        await service.stop_session()
+        await queue.shutdown(timeout=1)
+
+    async def test_broadcasts_target_pane_id_and_herdr_requested(self) -> None:
+        service, app_state, _, queue, _repo = _make_service()
+        sub = app_state.broadcaster.subscribe()
+
+        await service.start_session(target_pane_id="w1:p1", herdr_requested=True)
+
+        msg = sub.get_nowait()
+        data = json.loads(msg["data"])
+        assert data["target_pane_id"] == "w1:p1"
+        assert data["herdr_requested"] is True
+
+        await service.stop_session()
+        await queue.shutdown(timeout=1)
+
+    async def test_broadcasts_no_target_pane_id_for_plain_start(self) -> None:
+        """既存の引数なし呼び出しの回帰確認。
+
+        target_pane_id/herdr_requestedは既定値のままになる。
+        """
+        service, app_state, _, queue, _repo = _make_service()
+        sub = app_state.broadcaster.subscribe()
+
+        await service.start_session()
+
+        msg = sub.get_nowait()
+        data = json.loads(msg["data"])
+        assert data["target_pane_id"] is None
+        assert data["herdr_requested"] is False
+
+        await service.stop_session()
+        await queue.shutdown(timeout=1)
+
 
 class TestStopSession:
     async def test_stops_recording_immediately_without_waiting_for_stt(self) -> None:
@@ -162,7 +206,27 @@ class TestStopSession:
             messages.append(sub.get_nowait())
         status_msgs = [m for m in messages if m["event"] == "status"]
         assert len(status_msgs) == 1
-        assert json.loads(status_msgs[0]["data"])["recording"] is False
+        data = json.loads(status_msgs[0]["data"])
+        assert data["recording"] is False
+        assert data["herdr_send_confirmed"] is False
+
+        await queue.shutdown(timeout=1)
+
+    async def test_broadcasts_session_id_and_herdr_send_confirmed_on_stop(self) -> None:
+        service, app_state, _, queue, _repo = _make_service()
+        await service.start_session()
+        session_id = app_state.current_session.id  # type: ignore[union-attr]
+        sub = app_state.broadcaster.subscribe()
+
+        await service.stop_session(herdr_send_confirmed=True)
+
+        messages = []
+        while not sub.empty():
+            messages.append(sub.get_nowait())
+        status_msgs = [m for m in messages if m["event"] == "status"]
+        data = json.loads(status_msgs[0]["data"])
+        assert data["session_id"] == session_id
+        assert data["herdr_send_confirmed"] is True
 
         await queue.shutdown(timeout=1)
 
