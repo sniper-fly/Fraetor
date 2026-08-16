@@ -35,9 +35,10 @@ class TestBrowserUi:
             timeout=_UI_WAIT_MS,
         )
 
-        textarea = page.locator("#editor-textarea")
+        session_id = page.evaluate("sessionQueue[sessionQueue.length - 1].id")
+        textarea = page.locator(f"#block-textarea-{session_id}")
         page.wait_for_function(
-            "document.getElementById('editor-textarea').value.length > 0",
+            f"document.getElementById('block-textarea-{session_id}').value.length > 0",
             timeout=_UI_WAIT_MS,
         )
         assert "トグル" in textarea.input_value()
@@ -86,11 +87,13 @@ class TestBrowserUi:
         page.goto(base_url)
 
         page.evaluate("fetch('/api/toggle-recording', {method: 'POST'})")
+        page.wait_for_function("sessionQueue.length > 0", timeout=_UI_WAIT_MS)
+        session_id = page.evaluate("sessionQueue[sessionQueue.length - 1].id")
         page.wait_for_function(
-            "document.getElementById('editor-textarea').value.length > 0",
+            f"document.getElementById('block-textarea-{session_id}').value.length > 0",
             timeout=_UI_WAIT_MS,
         )
-        expected_text = page.locator("#editor-textarea").input_value()
+        expected_text = page.locator(f"#block-textarea-{session_id}").input_value()
 
         page.locator("#btn-copy-main").click()
 
@@ -132,48 +135,16 @@ class TestBrowserUi:
         history_list.locator("button", has_text="削除").first.click()
         assert page.evaluate("window.__clipboardWrites") == [expected_text]
 
-    def test_two_consecutive_recordings_do_not_mix_in_textarea(
+    def test_two_consecutive_recordings_do_not_mix_across_blocks(
         self, page: Page, fraetor_server_with_audio: Callable[[str], str]
     ) -> None:
         """正常系: 録音A→確定完了→録音Bと直列で行った場合、
-        (1) 確定 (finalize-session) 完了後もAの内容がtextareaに残り続け、
-        (2) 次の録音B開始時に初めてtextareaがクリアされ、
-        (3) Bのtextareaの内容にAの文字列が混入しない
-        ことを検証する (textareaの継ぎ足しバグ・過早クリアバグの回帰テスト)。
-
-        (1) は「確定直後にtextareaが一瞬だけ空になって消える」という
-        バグを検出する必要があるが、テスト側から `fetch('/api/history')`
-        等の別リクエストでポーリングして完了を判定する方式では、ブラウザの
-        HTTPリクエストがイベントループの別タスクとして解決されるため、
-        `tryAdvanceQueue()` 内で `sessionQueue.shift()` の直前に実行される
-        `textarea.value = ''`(バグ再現時)を必ず追い越せてしまい、
-        バグを見逃す (実際に検証済み: ポーリング方式ではバグを意図的に
-        再現させてもテストが誤ってPASSした)。そのため `page.add_init_script`
-        で `textarea.value` の setter を差し替え、代入された値の履歴を
-        `window.__textareaValueLog` に全件記録した上で、`tryAdvanceQueue()`
-        が確定処理を終える際に必ず変化する `sessionQueue.length === 0`
-        (キューからの除去はfinalize完了後、次のクリア候補の代入より前に
-        同期的に実行される) を完了シグナルとして待つ。
+        (1) Aのブロックは確定後もDOM上に残り続け (複数ブロック同時表示)、
+        (2) Bはセッションごとに独立した別のブロック要素として生成され、
+        (3) Bのブロックの内容にAの文字列が混入しない
+        ことを検証する (ブロックがセッションIDごとに独立したDOM要素であり、
+        単一要素を使い回さないことの回帰テスト)。
         """
-        page.add_init_script(
-            """
-            window.__textareaValueLog = [];
-            document.addEventListener('DOMContentLoaded', () => {
-              const el = document.getElementById('editor-textarea');
-              const descriptor = Object.getOwnPropertyDescriptor(
-                HTMLTextAreaElement.prototype, 'value'
-              );
-              Object.defineProperty(el, 'value', {
-                configurable: true,
-                get() { return descriptor.get.call(this); },
-                set(v) {
-                  window.__textareaValueLog.push(v);
-                  return descriptor.set.call(this, v);
-                }
-              });
-            });
-            """
-        )
         base_url = fraetor_server_with_audio("04_short_utterance.wav")
         page.goto(base_url)
 
@@ -183,6 +154,7 @@ class TestBrowserUi:
             "document.getElementById('rec-label').textContent === '録音中'",
             timeout=_UI_WAIT_MS,
         )
+        session_id_a = page.evaluate("sessionQueue[sessionQueue.length - 1].id")
         page.wait_for_timeout(2000)
         page.evaluate("fetch('/api/toggle-recording', {method: 'POST'})")
         page.wait_for_function(
@@ -190,43 +162,38 @@ class TestBrowserUi:
             timeout=_UI_WAIT_MS,
         )
 
+        textarea_a_id = f"block-textarea-{session_id_a}"
         page.wait_for_function(
-            "document.getElementById('editor-textarea').value.length > 0",
+            f"document.getElementById('{textarea_a_id}').value.length > 0",
             timeout=_UI_WAIT_MS,
         )
-        text_after_a = page.locator("#editor-textarea").input_value()
+        text_after_a = page.locator(f"#{textarea_a_id}").input_value()
         assert text_after_a.strip(), "録音Aの結果が表示されなかった"
-        log_len_after_a_shown = page.evaluate("window.__textareaValueLog.length")
 
-        # 確定 (finalize-session) 処理が完了するまで待つ。
-        # sessionQueue.shift() は finalize-session 完了直後、かつ
-        # (バグ再現時の) textarea.value = '' の直後に同期実行されるため、
-        # sessionQueue.length === 0 への遷移を確実な完了シグナルにできる
-        # (/api/history 等の別リクエストによるポーリングでは、ブラウザの
-        # 同期的なJS実行順序を確実に追い越せずバグを見逃す)。
-        page.wait_for_function("sessionQueue.length === 0", timeout=_UI_WAIT_MS)
-        # 回帰テスト: Aが表示されてからfinalize完了までの間に、textareaへ
-        # 空文字列が代入された瞬間が一度でもあれば、確定直後にtextareaが
-        # 一瞬クリアされて消えるバグが再発している。
-        log_since_a_shown = page.evaluate(
-            f"window.__textareaValueLog.slice({log_len_after_a_shown})"
-        )
-        assert "" not in log_since_a_shown, (
-            "finalize完了までの間にtextareaが一瞬空になった"
-            " (次の録音が始まる前に消えるバグ)"
+        # 確定 (finalize-session) 処理が完了するまで待つ
+        page.wait_for_function(
+            f"sessionQueue.find(s => s.id === '{session_id_a}')?.finalized === true",
+            timeout=_UI_WAIT_MS,
         )
 
-        # 録音B: 同じ音声を再度録音し、Aの文字列が残っていないことを確認する
+        # 録音B: 同じ音声を再度録音し、Aとは別のブロックが生成されることを確認する
         page.evaluate("fetch('/api/toggle-recording', {method: 'POST'})")
         page.wait_for_function(
             "document.getElementById('rec-label').textContent === '録音中'",
             timeout=_UI_WAIT_MS,
         )
-        # 録音B開始時に初めてtextareaがクリアされ、Aの内容が消えるべき。
         page.wait_for_function(
-            "document.getElementById('editor-textarea').value === ''",
+            "sessionQueue.length > 0"
+            f" && sessionQueue[sessionQueue.length - 1].id !== '{session_id_a}'",
             timeout=_UI_WAIT_MS,
         )
+        session_id_b = page.evaluate("sessionQueue[sessionQueue.length - 1].id")
+        assert session_id_b != session_id_a, "Bが新しいブロックとして生成されなかった"
+        # Aのブロックは確定後もDOM上に残り、内容が保持され続ける (複数ブロック表示)。
+        assert page.locator(f"#block-{session_id_a}").count() == 1, (
+            "確定済みのAのブロックが録音B開始時に消えている"
+        )
+
         page.wait_for_timeout(2000)
         page.evaluate("fetch('/api/toggle-recording', {method: 'POST'})")
         page.wait_for_function(
@@ -234,18 +201,19 @@ class TestBrowserUi:
             timeout=_UI_WAIT_MS,
         )
 
+        textarea_b_id = f"block-textarea-{session_id_b}"
         page.wait_for_function(
-            "document.getElementById('editor-textarea').value.length > 0",
+            f"document.getElementById('{textarea_b_id}').value.length > 0",
             timeout=_UI_WAIT_MS,
         )
-        text_after_b = page.locator("#editor-textarea").input_value()
+        text_after_b = page.locator(f"#{textarea_b_id}").input_value()
 
         assert text_after_b.strip(), "録音Bの結果が表示されなかった"
-        # Bの内容はAの内容を「含んでいない」(継ぎ足しが起きていない) ことを確認する。
-        # 同一音声ファイルのため認識結果は概ね同一だが、Aの文字列がBの前方に
-        # 重複して残っていれば len が異常に長くなる/文字列が2回出現するため検出できる
+        # 同一音声ファイルのため認識結果は同一になり得るが、Aの文字列がBの
+        # ブロックに継ぎ足されていれば重複して出現するため、出現回数で検出する
+        # (「含んでいない」ことではなく「二重に含まれていない」ことを検証する)。
         assert text_after_b.count(text_after_a.strip()[:5]) <= 1, (
-            "textareaに前セッションの内容が継ぎ足されている"
+            "Bのブロックに前セッションの内容が継ぎ足されている"
         )
 
 

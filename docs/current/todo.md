@@ -22,5 +22,5 @@
 ## phase3: フロントエンド (複数ブロック表示・送信) + ドキュメント更新
 目的: メイン画面を単一ブロック表示から直近4件の複数ブロック表示に変更し、各ブロックの送信先選択・手動送信・自動送信・トーストを実装する。仕上げにdesign.mdへ反映する。
 
-- [ ] `src/templates/index.html`  # sessionQueue拡張、tryAdvanceQueue修正 (重複処理防止含む)、status/SSEハンドラ拡張、複数ブロック表示・ドロップダウン・送信ボタン、トースト一般化、設定フィールド追加
-- [ ] `design.md`  # Herdr送信経路 (新たな出力先) の追記
+- [x] `src/templates/index.html`  # sessionQueue拡張、tryAdvanceQueue修正 (重複処理防止含む)、status/SSEハンドラ拡張、複数ブロック表示・ドロップダウン・送信ボタン、トースト一般化、設定フィールド追加
+- [x] `design.md`  # Herdr送信経路 (新たな出力先) の追記

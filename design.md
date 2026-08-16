@@ -56,10 +56,11 @@ pyperclip でクリップボードにコピー
 | 13 | 発話終了から2分間無音が続いたら自動で録音停止 (Silero VAD でローカル検出) |
 | 14 | 無音が3秒続いたら、そこまでの発話区間を1セグメントとして逐次文字起こしに送る (録音中にテキストが順次確定していく) |
 | 15 | 一部の設定値はプロセス再起動なしにブラウザの設定タブから変更できる (「動的設定」章参照) |
+| 16 | `POST /api/toggle-recording-and-send-to-herdr` で、録音開始時に前面のHerdrペインを自動記録し、録音停止時にそのセッションを送信確定としてマークする。校正完了後、確定済みのセッションはHerdrの対象ペインへ自動送信される (「Herdr連携によるコピペ不要送信」章参照) |
 
 ## ブラウザ UI
 
-### メインタブ (エディタモード)
+### メインタブ (ブロック表示モード)
 
 ```
 ┌─ Voice Input ──────────────────────────────────┐
@@ -69,30 +70,37 @@ pyperclip でクリップボードにコピー
 │ │          録音: ● 停止中  校正: [ON]              │ │
 │ └──────────────────────────────────────────────┘ │
 │                                                  │
-│ ┌──────────────────────────────────────────────┐ │
-│ │ <textarea> 確定テキスト (編集可能)              │ │
-│ │                                                │ │
-│ ├──────────────────────────────────────────────┤ │
-│ │ それから...                          [認識中]  │ │
-│ └──────────────────────────────────────────────┘ │
-│                                                  │
+│ ┌─ ブロック (最新・上) ────────────────────────┐  │
+│ │ <textarea> 確定テキスト (編集可能)             │  │
+│ │ それから...                          [認識中]  │  │
+│ │ 送信先: [🔽 w1:p1 (claude-code) ▼]  [送信]     │  │
+│ └────────────────────────────────────────────────┘  │
+│ ┌─ ブロック (1つ古い) ─────────────────────────┐  │
+│ │ ...                                             │  │
+│ └────────────────────────────────────────────────┘  │
+│  (`herdr_slot_count`件まで、新しいものが上)        │
 └──────────────────────────────────────────────────┘
 ```
 
-- `<textarea>` には常に「表示キュー先頭 (`sessionQueue[0]`) のセッション」の
-  確定済みテキストのみを表示する。自由にカーソル移動・編集可能
-- textarea の下に interim テキストを読み取り専用で表示 (先頭セッションの分のみ)
-- SSE `recognized` イベント受信時: `session_id` が指す表示キュー内セッションに
-  テキストを蓄積。先頭セッションの場合のみ textarea 末尾に追加表示
-  (カーソル位置を保持)。1セッションの録音中に無音区切りごとに複数回届く
-  (「逐次文字起こし (無音区切り)」章参照)
-- SSE `session_end` 受信時: 該当セッションを完了済みにする。先頭セッションが
-  完了していれば、校正ON時は `POST /api/proofread` で校正後、
-  `POST /api/finalize-session` で送信し確定する。**textarea はこの時点では
-  クリアしない**。確定済みのテキストは、次のセッションの録音が開始され
-  表示が切り替わるまでそのまま表示され続ける (詳細は「セッション管理」章参照)
-- SSE `status(recording=true)` 受信時: 新セッションが表示キュー先頭なら、
-  ここで初めて textarea をクリアして表示を切り替える
+- `#blocks-container` に、直近の未表示上限 (`herdr_slot_count`、既定4件) までの
+  セッションをブロックとして同時表示する (新しいものが上)。表示件数を超えた
+  古いブロックは、確定済みのものから順に表示対象から外れる (「Herdr連携に
+  よるコピペ不要送信」章参照)
+- 各ブロックは自分専用の `<textarea>` + interim 表示 + Herdr送信先選択
+  ドロップダウン + 個別送信ボタンを持つ。ブロック間でテキスト・送信先が
+  混線しないよう、DOM要素・状態 (`sessionQueue` の各アイテム) ともに
+  セッションIDごとに独立させている
+- `<textarea>` は自由にカーソル移動・編集可能。他のブロックの状態変化
+  (新規セッション開始・確定・退避) によって、既存ブロックの `<textarea>`
+  の内容が書き換えられることはない (「複数ブロック表示のDOM管理」章参照)
+- SSE `recognized` イベント受信時: `session_id` が指すブロックの `<textarea>`
+  末尾にのみ追加表示 (カーソル位置を保持)。1セッションの録音中に無音区切り
+  ごとに複数回届く (「逐次文字起こし (無音区切り)」章参照)
+- SSE `session_end` 受信時: 該当セッションを完了済みにする。表示キュー中で
+  最も古い未確定セッションが完了していれば、校正ON時は `POST /api/proofread`
+  で校正後、`POST /api/finalize-session` で送信し確定する。確定後もブロックは
+  DOM上に残り続け、テキストが消えることはない (詳細は「セッション管理」章参照)
+- ブロックの送信ボタンは、そのセッションが確定するまで無効化される
 
 ### 履歴タブ
 
@@ -145,12 +153,12 @@ pyperclip でクリップボードにコピー
 
 | 項目 | 仕様 |
 |------|------|
-| セッション開始 | `POST /api/toggle-recording` → MAI Transcribe 接続 → マイクキャプチャ開始。SSE `status(recording=true, session_id)` でブラウザの表示キューにセッションを登録し、新セッションが表示キュー先頭ならここで初めて textarea をクリアして表示を切り替える |
-| セッション終了 (録音停止) | 再トグル、セッション時間上限 (10分) 到達、または発話終了から2分間の無音。`RecordingSessionService.stop_session()` は文字起こし本体 (STT の `stop()`) を待たずに即座に返る |
+| セッション開始 | `POST /api/toggle-recording` (または `POST /api/toggle-recording-and-send-to-herdr`) → MAI Transcribe 接続 → マイクキャプチャ開始。SSE `status(recording=true, session_id, target_pane_id, herdr_requested)` でブラウザにセッションを登録し、新しいブロックとして即座に表示に追加する |
+| セッション終了 (録音停止) | 再トグル、セッション時間上限 (10分) 到達、または発話終了から2分間の無音。`RecordingSessionService.stop_session()` は文字起こし本体 (STT の `stop()`) を待たずに即座に返る。SSE `status(recording=false, session_id, herdr_send_confirmed)` を送信する |
 | 文字起こし処理 | 録音停止と非同期に `TranscriptionQueue` がFIFOで直列処理する (詳細は「文字起こしキュー」章参照)。処理中でも次のセッションをすぐに開始できる |
-| ブラウザ表示 (セッション分離) | すべてのSSEイベントに `session_id` が乗る。ブラウザは `session_id` ごとに独立したテキストを蓄積する表示キュー (`sessionQueue`) を持ち、textareaには常にキュー先頭セッションの内容のみを表示する。他セッションの `recognized` 結果はtextareaに一切反映されない (詳細は「文字起こしキュー」章参照) |
-| 自動確定フロー | 表示キュー先頭のセッションが `session_end` を受信すると、校正ON時は校正後に `POST /api/finalize-session` (session_id指定) で確定 → 表示キューから除去 → 次のセッションが既に完了済みなら即座に連続して確定する。**textareaは確定直後にはクリアしない**。確定済みのテキストは、次のセッションの録音が開始され表示が切り替わるまでそのまま表示され続ける (即座にクリアすると確定済みテキストが一瞬しか見えずに消えてしまうため)。複数セッションが同時に完了待ちでも、**完了順に1件ずつ自動確定**され、ユーザーの手動操作は不要 |
-| クリップボード | 直近に確定したセッションのテキストのみがコピーされる (他セッションの内容と混在しない) |
+| ブラウザ表示 (セッション分離) | すべてのSSEイベントに `session_id` が乗る。ブラウザは `session_id` ごとに独立した状態を持つ表示キュー (`sessionQueue`) を持ち、直近 `herdr_slot_count` 件をブロックとして同時表示する。他セッションの `recognized` 結果は該当セッションのブロックにのみ反映される (詳細は「文字起こしキュー」「Herdr連携によるコピペ不要送信」章参照) |
+| 自動確定フロー | `sessionQueue` 中で最も古い未確定セッションが `session_end` を受信すると、校正ON時は校正後に `POST /api/finalize-session` (session_id指定) で確定 → そのブロックを確定済みにする (DOM上には残る) → 次のセッションが既に完了済みなら即座に連続して確定する。複数セッションが同時に完了待ちでも、**完了順に1件ずつ自動確定**され、ユーザーの手動操作は不要。確定済みかつ表示件数の上限を超えたブロックのみ表示から外れる |
+| クリップボード | メイン画面のコピーボタンは最新のブロックの内容をコピーする。履歴カードのコピーはそのカード自身の内容のみをコピーする (他セッションの内容と混在しない) |
 | 履歴保存 | 文字起こし完了時ではなく、確定 (`finalize-session`) 時に JSONL に追記。各エントリは対応する1セッションの内容のみを含み、他セッションと混在しない |
 | 履歴削除 | `DELETE /api/history/{session_id}` で個別削除 |
 
@@ -293,7 +301,7 @@ pyperclip でクリップボードにコピー
 **動的化の対象**: `max_session_duration_sec` / `silence_timeout_sec` /
 `segment_silence_sec` / `vad_threshold` / `mai_locale` / `mai_model_name` /
 `mai_timeout_sec` / `proofread_timeout_sec` / `shutdown_delay_sec` /
-`sse_keepalive_sec`
+`sse_keepalive_sec` / `herdr_slot_count`
 
 **`Settings` に残すもの (動的化しない)**: `stt_sample_rate` (Singletonの
 `audio_capture` に紐づき、マイクストリーム再起動が必要)、`proofread_prompt` /
@@ -316,6 +324,11 @@ Singleton の `AudioPipelineCoordinator` には値ではなく
 すぐに開始できる (「文字起こしキュー」章参照)。
 
 ```
+[録音開始 (POST /api/toggle-recording-and-send-to-herdr の場合のみ)]
+  HerdrClientPort.get_focused_pane_id() で前面ペインを自動取得 (取得失敗時は
+  None のまま録音は開始する) -> RecordingSession.target_pane_id に記録
+    -> SSE("status", recording=true, session_id, target_pane_id, herdr_requested)
+
 [レーン1: 録音中 (RecordingSessionService / AudioPipelineCoordinator)]
   マイク -> sounddevice(PCM, 常駐ストリーム) -> MAI Transcribe (バッファリング)
                                              -> SpeechActivityDetector (Silero VAD)
@@ -323,28 +336,35 @@ Singleton の `AudioPipelineCoordinator` には値ではなく
 [録音中: 発話終了から3秒無音 (SegmentSilenceMonitor)]
   未送信区間を切り出して MAI Transcribe へ送信 (stt_client.flush())
     -> recognized -> SSE("recognized", session_id, seg-N)
-       -> ブラウザ: textarea に逐次追記 (録音を止めずにテキストが確定していく)
+       -> ブラウザ: session_idに対応するブロックのtextareaに逐次追記
+          (録音を止めずにテキストが確定していく)
     -> 無音が続く間は3秒おきに再発火するが、送るものがなければ何もしない
 
 [再トグル or 10分経過 or 発話終了から2分間無音]
   録音停止 (STTのstop()は呼ばない)
     -> stt_client と専用event_queueをTranscriptionQueueにジョブとしてenqueue
     -> ここで即座にstop_session()が返る (次のstart_session()をすぐ受付可能)
-    -> SSE("status", recording=false) をブラウザに送信
+    -> SSE("status", recording=false, session_id, herdr_send_confirmed) をブラウザに送信
+       (herdr_send_confirmed は /api/toggle-recording-and-send-to-herdr の
+       2回目呼び出し時のみ true になる)
 
 [レーン2: 文字起こしワーカー (TranscriptionQueue, FIFO・単一ワーカーで直列処理)]
   ジョブをdequeue -> MAI Transcribe バッチ認識 (stt_client.stop() が
                      flush 済みを除いた残りを最終セグメントとして送信)
     -> recognized  -> SSE("recognized", session_id, seg-N)
-       -> ブラウザ: session_idごとの表示キューに蓄積 (先頭セッションのみtextareaに反映)
+       -> ブラウザ: session_idに対応するブロックのtextareaに逐次反映
     -> session_end (session_id付き) をブラウザに送信
-    -> ブラウザ: 先頭セッションが完了済みなら (校正ON時) POST /api/proofread で校正
-       -> Vertex AI Gemini で校正 -> textarea 更新
+    -> ブラウザ: 表示キュー中で最も古い未確定セッションが完了済みなら
+       (校正ON時) POST /api/proofread で校正
+       -> Vertex AI Gemini で校正 -> ブロックのtextarea更新
     -> ブラウザが session_id + textareaの内容を POST /api/finalize-session で送信
     -> pyperclip にコピー
     -> JSONL に保存 (text フィールドは校正/編集済みテキスト)
-    -> 表示キューから除去、次のセッションへ (textareaは次の録音開始まで
-       クリアせず、確定済みテキストを表示し続ける)
+    -> ブラウザ: そのブロックを確定済みにする (DOM上には残り続ける)。
+       herdr_requested かつ herdr_send_confirmed が両方 true なら、
+       校正が成功していれば HerdrClientPort.send_text() で自動送信、
+       失敗していればクリップボードへフォールバック (「Herdr連携による
+       コピペ不要送信」章参照)
     -> 次のジョブをdequeue
 ```
 
@@ -364,6 +384,7 @@ class RecordingSession(BaseModel):
     id: str              # UUID
     segments: list[Segment] = []
     started_at: datetime
+    target_pane_id: str | None = None  # Herdr送信先 (録音開始時に自動取得)
 
 class TranscriptionJob(BaseModel):
     """文字起こし待ちの1セッション分のジョブ (TranscriptionQueueが処理)。"""
@@ -408,6 +429,7 @@ mai_timeout_sec = 60                 # 認識APIタイムアウト
 proofread_timeout_sec = 15           # 校正APIタイムアウト
 shutdown_delay_sec = 0.5             # 終了リクエストからプロセス終了までの遅延
 sse_keepalive_sec = 15               # SSEキープアライブ送信間隔
+herdr_slot_count = 4                 # メイン画面に同時表示するブロック数
 
 # --- Settings (環境変数、変更には再起動が必要) ---
 STT_SAMPLE_RATE = 16000              # 音声サンプルレート
@@ -443,8 +465,12 @@ proofreading/
 └── infrastructure/     # VertexGeminiProofreader
 
 shared/                 # Settings, Secrets, DynamicSettings +
-                         # SettingsRepositoryPort/JsoncSettingsRepository,
-                         # ProcessShutdownerPort (横断的)
+│                        # SettingsRepositoryPort/JsoncSettingsRepository,
+│                        # ProcessShutdownerPort (横断的)
+└── herdr/              # HerdrClientPort/HerdrSocketClient。どの境界づけ
+                         # られたコンテキストにも属さない外部システムクラ
+                         # イアントという点でDynamicSettingsと同じ配置
+
 presentation/           # FastAPIルート・スキーマ (HTTP変換のみ)
 ```
 
@@ -487,8 +513,9 @@ Containerから取得したインスタンスを `app.state` に明示的に代�
 セッション分離 (`session_id`によるクロスセッション分離): 全SSEイベント
 (`status`/`interim`/`recognized`/`processing`/`processing_done`/
 `session_end`) に発生元セッションの `session_id` を含める。ブラウザは
-`session_id` ごとに独立したテキストを蓄積し、textareaにはキュー先頭の
-セッションのみを表示する (詳細は「セッション管理」章参照)。サーバー側の
+`session_id` ごとに独立した状態を持つブロックを表示し、各ブロックの
+textareaにはそのセッション専用の内容のみが反映される (詳細は
+「セッション管理」章参照)。サーバー側の
 `AppState.pending_sessions` も単一値ではなく `list[FinalizedSession]` で
 保持し、`finalize-session` リクエストの `session_id` で個別に取り出す
 (`pop_pending_session`)。これにより、複数セッションの文字起こしが連続
@@ -510,12 +537,85 @@ Containerから取得したインスタンスを `app.state` に明示的に代�
 
 - **体感遅延**: 直列処理のため、キューに複数ジョブが滞留していると、
   後続ジョブは先行ジョブの処理完了 (最大 `mai_timeout_sec`秒、
-  デフォルト60秒) を待ってから処理が始まる。ブラウザの表示キューも
-  同様に、先頭セッションが確定するまで後続セッションの内容を表示しない。
+  デフォルト60秒) を待ってから処理が始まる。各セッションの`recognized`/
+  `interim`はそのセッション専用のブロックに即時反映されるため表示自体は
+  待たされないが、校正・確定 (`finalize-session`) は表示キューの先頭
+  (最も古い未確定セッション) から順に1件ずつ行われる (「セッション管理」
+  「Herdr連携によるコピペ不要送信」章参照)。
 - **メモリ**: 録音を連投するとジョブがキューに滞留し、その分のPCM
   バッファ (`MaiTranscribeClient._buffer`) がメモリに残る。滞留数の
   上限は設けない。
 - **UI**: キュー内に複数ジョブが滞留していても件数表示等は行わない。
+
+## Herdr連携によるコピペ不要送信
+
+文字起こし結果を、対象のターミナル (Herdr管理下のペイン、典型的には
+Claude Code等のコーディングエージェント) へクリップボード経由の手動貼り付け
+なしに直接送信する機能。宛先確定は録音開始時点の「前面のHerdrペイン」を
+自動記録するデフォルト経路とし、ドロップダウンでの手動選択・手動送信ボタン
+はそれを上書き/補完する経路として別に用意する (ショートカット一発運用を
+崩さないため)。
+
+### Herdrクライアント (`shared/herdr/`)
+
+Herdrクライアント (Socket API通信 + CLI呼び出し) は、`dictation`/
+`transcript_history`/`proofreading` のどの境界づけられたコンテキストにも
+属さない外部システムへのクライアントであり、`DynamicSettings`と同じ理由で
+`shared/herdr/`に配置する (「アーキテクチャ層構成」章参照)。
+
+- `HerdrClientPort` (ABC): `get_focused_pane_id()` / `list_sessions()` /
+  `send_text(pane_id, text)`。いずれも例外を投げず、取得・送信失敗時は
+  `None`/`[]`/`False`を返す (呼び出し元に例外を伝播させない)
+- `HerdrSocketClient`: Unix domain socket経由のSocket API呼び出し
+  (`session.snapshot`/`pane.list`) と、`herdr agent prompt`
+  (Enter送信込み) のCLI呼び出しで実装する。ソケットパス不在・接続失敗・
+  タイムアウト・JSONパース失敗はすべて捕捉してログのみ出す
+
+### エンドポイント
+
+| エンドポイント | 役割 |
+|---|---|
+| `POST /api/toggle-recording-and-send-to-herdr` | 既存の`/api/toggle-recording`とは独立した新規トグル。1回目呼び出しで`get_focused_pane_id()`の結果を`target_pane_id`として記録しつつ録音開始 (取得失敗時も`None`のまま録音は開始する)。2回目呼び出しで録音停止し、そのセッションを送信確定 (`herdr_send_confirmed=true`) としてマークする (即時送信はしない) |
+| `GET /api/herdr-sessions` | 送信先ドロップダウン表示用のセッション一覧 (`HerdrClientPort.list_sessions()`の結果) |
+| `POST /api/send-to-herdr` | 指定した`pane_id`へ`text`を送信する (手動送信ボタン・自動送信の両方から呼ばれる) |
+
+`/api/toggle-recording-and-send-to-herdr`はブラウザのJSから直接叩かれず、
+既存の`/api/toggle-recording`と同じく外部のショートカットスクリプト
+(`toggle-recording-and-send-to-herdr.sh`) からcurlで叩かれる。フロントエンドは
+このレスポンスを受け取れないため、必要な情報はすべてSSEの`status`イベント
+(`target_pane_id`/`herdr_requested`/`herdr_send_confirmed`) 経由で受け取る。
+
+### 送信先の保持単位とタイミング
+
+送信先はグローバル単一状態ではなく、`RecordingSession.target_pane_id`として
+セッション (ブロック) 単位で保持する。後続録音で書き換わる誤送信事故を防ぐ
+ため (既存の「セッション単位の状態管理」パターンとの一貫性)。
+
+実際の送信は、既存の校正フロー (`POST /api/proofread` → `POST
+/api/finalize-session`) が完了した時点で、送信確定済み
+(`herdrRequested && herdrSendConfirmed`) のブロックについて自動的に行われる。
+`herdrAutoSendAttempted`フラグで二重送信を防ぐ (SSE再接続時の`status`再送や、
+「確定完了時」「送信確定イベント受信時」の両方から呼び出されても1回のみ送信)。
+校正がタイムアウトした場合はHerdr送信を諦め、失敗トーストを出しつつ
+クリップボードへフォールバックする。
+
+### メイン画面のブロック表示
+
+メイン画面は直近`herdr_slot_count`件 (既定4件、新しいものが上) を同時に
+ブロック表示する (「ブラウザ UI」章参照)。各ブロックは個別の送信先
+ドロップダウン (デフォルトは自動取得値、開いた時に`GET
+/api/herdr-sessions`を取得) と個別の手動送信ボタンを持つ。送信ボタンは
+そのブロックの確定 (校正完了/文字起こし確定) まで無効化され、
+`target_pane_id`が無い場合はクリップボードコピーとして動作する。
+
+複数ブロックのDOM要素はセッションIDごとに独立して生成し、確定・退避以外の
+イベント (新規ブロック追加・古いブロックの削除) でのみDOM構造を作り直す。
+既存ブロックの`<textarea>`/interim表示は対象のブロック要素を直接更新する
+方式とし、他ブロックの状態変化のたびに内容を再構築しない (ユーザーが
+確定済みブロックのテキストを編集中に、別ブロックの完了によってその編集が
+失われることを防ぐため)。表示件数の上限を超えたブロックは、確定済みのもの
+から順に表示対象から外れる (履歴タブには今まで通り全件が残るため、
+表示から外れても内容は失われない)。
 
 ## 技術スタック
 
@@ -530,6 +630,7 @@ Containerから取得したインスタンスを `app.state` に明示的に代�
 | フロントエンド | HTMX + SSE + TailwindCSS (CDN) |
 | 履歴保存 | JSONL (`~/.voice-input/history.jsonl`) |
 | クリップボード | pyperclip (Linux: xclip/wl-copy, macOS: pbcopy を自動選択) |
+| Herdr連携 | Unix domain socket (Socket API) + `herdr` CLI subprocess |
 | DIコンテナ | dependency-injector |
 
 ## 非機能要件
