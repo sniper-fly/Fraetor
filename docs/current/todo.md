@@ -1,9 +1,9 @@
 ## phase1: Herdrクライアント (Socket API/CLI呼び出し)
 目的: 既存の3境界づけられたコンテキストに属さない外部システムクライアントを`src/shared/herdr/`に新設し、単体で動作確認できる状態にする。
 
-- [ ] `src/shared/herdr/ports.py`  # HerdrSessionInfo/HerdrClientPort定義
-- [ ] `src/shared/herdr/socket_client.py`  # HerdrSocketClient実装 (Socket API + CLI subprocess)
-- [ ] `tests/shared/herdr/test_socket_client.py`  # 単体テスト
+- [x] `src/shared/herdr/ports.py`  # HerdrSessionInfo/HerdrClientPort定義
+- [x] `src/shared/herdr/socket_client.py`  # HerdrSocketClient実装 (Socket API + CLI subprocess)
+- [x] `tests/shared/herdr/test_socket_client.py`  # 単体テスト
 
 ## phase2: dictation拡張・DI配線・新規エンドポイント
 目的: Herdrクライアントを使い、録音セッション単位でtarget_pane_idを記録するトグルエンドポイントと、セッション一覧/送信用エンドポイントを配線する。
