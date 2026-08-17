@@ -266,6 +266,40 @@ class TestStopSession:
 
         assert app_state.pending_sessions[-1].full_text == "テスト"
 
+    async def test_stop_waits_for_in_flight_flush_before_enqueueing(self) -> None:
+        """無音区切りのflushが進行中にstop_sessionが呼ばれても、flushの
+        完了を待ってからTranscriptionQueueへジョブを投入する。
+
+        待たずに投入すると、TranscriptionQueue側のdrain()がevent_queueへの
+        recognized到着より先に走ってしまい、flush中の発話テキストが
+        欠落する (`AudioPipelineCoordinator.stop()`の`_flush_lock`待ちが、
+        `RecordingSessionService`経由の統合フローでも効いているかの検証)。
+        """
+        service, app_state, mock_stt, queue, _repo = _make_service()
+        await service.start_session()
+
+        event_queue = service._audio_pipeline.event_queue
+        assert event_queue is not None
+
+        async def slow_flush(*, trim_before_sample: int | None) -> None:
+            await asyncio.sleep(0.05)
+            event_queue.put_nowait({"type": "recognized", "text": "発話1"})
+
+        mock_stt.flush = AsyncMock(side_effect=slow_flush)
+
+        service._audio_pipeline._vad.last_speech_start_sample = 1000
+        service._audio_pipeline._on_audio_chunk(b"chunk")
+        flush_task = asyncio.create_task(service._audio_pipeline._flush_segment())
+        await asyncio.sleep(0)  # flushがロックを取得しHTTP応答待ちに入るまで進める
+
+        await service.stop_session()
+        await queue.shutdown(timeout=1)
+
+        assert app_state.pending_sessions[-1].full_text == "発話1", (
+            "flush完了を待たずにenqueueすると、drain()がこのテキストを取りこぼす"
+        )
+        await flush_task
+
 
 class TestSttEventProcessing:
     async def test_full_text_assembled_from_segments(self) -> None:
@@ -327,6 +361,59 @@ class TestIncrementalSegments:
         await queue.shutdown(timeout=1)
 
         assert app_state.pending_sessions[-1].full_text == "1つ目。2つ目。3つ目。"
+
+    async def test_concurrent_flushes_preserve_order_end_to_end(self) -> None:
+        """発話1(処理が遅いflush)の最中に発話2の無音区切りが来ても、
+        flush呼び出し順(=発話順)でセグメントが確定する。
+
+        `test_audio_pipeline_coordinator.py::test_concurrent_flushes_are_serialized`
+        はflush呼び出し引数(trim_before_sample)の直列化のみを検証している。
+        ここでは`_flush_lock`の直列化がSegmentAccumulatorまで正しく伝播し、
+        最終的なfull_text/セグメント順序が「後から終わった短い発話が先に
+        確定する」形で崩れないことを確認する。
+        """
+        service, app_state, mock_stt, queue, _repo = _make_service()
+        await service.start_session()
+
+        event_queue = service._audio_pipeline.event_queue
+        assert event_queue is not None
+        coordinator = service._audio_pipeline
+        call_count = 0
+
+        async def flush(*, trim_before_sample: int | None) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # 発話1: 処理(HTTP応答)が遅い長い発話を想定
+                await asyncio.sleep(0.05)
+                event_queue.put_nowait({"type": "recognized", "text": "発話1"})
+            else:
+                # 発話2: 即座に応答が返る短い発話を想定
+                event_queue.put_nowait({"type": "recognized", "text": "発話2"})
+
+        mock_stt.flush = AsyncMock(side_effect=flush)
+
+        coordinator._vad.last_speech_start_sample = 1000
+        coordinator._on_audio_chunk(b"chunk-a")
+        first_flush = asyncio.create_task(coordinator._flush_segment())
+        await asyncio.sleep(0)  # 1回目がロックを取得しHTTP応答待ちに入るまで進める
+
+        coordinator._vad.last_speech_start_sample = 5000
+        coordinator._on_audio_chunk(b"chunk-b")
+        second_flush = asyncio.create_task(coordinator._flush_segment())
+
+        await asyncio.gather(first_flush, second_flush)
+        await asyncio.sleep(0.01)
+
+        session = app_state.current_session
+        assert session is not None
+        assert [s.text for s in session.segments] == ["発話1", "発話2"], (
+            "直列化が効いていなければ発話2が先に確定してしまう"
+        )
+
+        await service.stop_session()
+        await queue.shutdown(timeout=1)
+        assert app_state.pending_sessions[-1].full_text == "発話1発話2"
 
 
 class TestSessionTimeout:
@@ -478,13 +565,53 @@ class TestConcurrentStartStop:
         assert app_state.current_session is not None
         assert app_state.current_session.id != first_session_id
 
+        second_session_id = app_state.current_session.id
+
         stt_stop_proceed.set()
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
         pending_ids = [s.id for s in app_state.pending_sessions]
-        assert pending_ids[-1] != first_session_id
-        assert pending_ids[-1] != first_session_id
+        assert pending_ids == [first_session_id, second_session_id], (
+            "後発(second)が先にキュー投入されても、両セッションが取り違え・"
+            "欠落せず投入順(=録音開始順)で残る"
+        )
+
+    async def test_three_sessions_queued_while_first_still_processing(self) -> None:
+        """1件目がキューで処理中の間に2件目・3件目まで開始/停止しても、
+        3セッションとも取り違え・欠落せず投入順で区別されて残る。"""
+        service, app_state, mock_stt, queue, _repo = _make_service(post_processing=True)
+
+        stt_stop_entered = asyncio.Event()
+        stt_stop_proceed = asyncio.Event()
+
+        async def slow_stt_stop() -> None:
+            stt_stop_entered.set()
+            await stt_stop_proceed.wait()
+
+        mock_stt.stop = slow_stt_stop
+
+        await service.start_session()
+        first_session_id = app_state.current_session.id  # type: ignore[union-attr]
+        await service.stop_session()
+        await stt_stop_entered.wait()
+
+        # 1件目はまだTranscriptionQueueでstop()待ちのまま、2件目・3件目を
+        # 連続して開始/終了する (いずれも即座に返り、キューに積まれるだけ)。
+        mock_stt.stop = AsyncMock()
+        await service.start_session()
+        second_session_id = app_state.current_session.id  # type: ignore[union-attr]
+        await service.stop_session()
+
+        await service.start_session()
+        third_session_id = app_state.current_session.id  # type: ignore[union-attr]
+        await service.stop_session()
+
+        stt_stop_proceed.set()
+        await queue.shutdown(timeout=1)
+
+        pending_ids = [s.id for s in app_state.pending_sessions]
+        assert pending_ids == [first_session_id, second_session_id, third_session_id]
 
     async def test_double_stop_second_call_is_noop(self) -> None:
         """録音していない状態でのstop_sessionは何もしない (冪等)。"""
