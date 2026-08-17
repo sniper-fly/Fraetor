@@ -44,9 +44,17 @@ class TestGetFocusedPaneId:
     async def test_parses_focused_pane_id_from_snapshot(
         self, short_tmp_dir: Path
     ) -> None:
+        """実際のsession.snapshotレスポンスはfocused_pane_idを
+        result.snapshot配下にネストする (result直下ではない)。"""
         socket_path = short_tmp_dir / "herdr.sock"
         server = await _serve_one_response(
-            socket_path, {"result": {"focused_pane_id": "w1:p1"}}
+            socket_path,
+            {
+                "result": {
+                    "type": "session_snapshot",
+                    "snapshot": {"focused_pane_id": "w1:p1"},
+                }
+            },
         )
         client = HerdrSocketClient(socket_path=socket_path)
 
@@ -83,6 +91,39 @@ class TestListSessions:
         assert [(s.pane_id, s.label) for s in sessions] == [
             ("w1:p1", "claude-code"),
             ("w1:p2", "shell"),
+        ]
+        server.close()
+        await server.wait_closed()
+
+    async def test_falls_back_to_terminal_title_when_label_is_null(
+        self, short_tmp_dir: Path
+    ) -> None:
+        """実際のHerdrはlabelを持たないpaneが多く、その場合は
+        terminal_title_stripped (ターミナルタイトル) を代わりに使う。"""
+        socket_path = short_tmp_dir / "herdr.sock"
+        server = await _serve_one_response(
+            socket_path,
+            {
+                "result": {
+                    "panes": [
+                        {
+                            "pane_id": "w1:p1",
+                            "label": None,
+                            "title": None,
+                            "terminal_title_stripped": "Claude Code",
+                        },
+                        {"pane_id": "w1:p2", "label": None, "title": None},
+                    ]
+                }
+            },
+        )
+        client = HerdrSocketClient(socket_path=socket_path)
+
+        sessions = await client.list_sessions()
+
+        assert [(s.pane_id, s.label) for s in sessions] == [
+            ("w1:p1", "Claude Code"),
+            ("w1:p2", "w1:p2"),
         ]
         server.close()
         await server.wait_closed()

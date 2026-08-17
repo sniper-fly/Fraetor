@@ -68,7 +68,10 @@ class HerdrSocketClient(HerdrClientPort):
         result = await self._call("session.snapshot")
         if not result:
             return None
-        pane_id = result.get("focused_pane_id")
+        snapshot = result.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return None
+        pane_id = snapshot.get("focused_pane_id")
         return pane_id if isinstance(pane_id, str) else None
 
     async def list_sessions(self) -> list[HerdrSessionInfo]:
@@ -80,10 +83,15 @@ class HerdrSocketClient(HerdrClientPort):
             return []
         sessions = []
         for pane in panes:
-            pane_id = pane.get("pane_id") or pane.get("id")
+            pane_id = pane.get("pane_id")
             if not pane_id:
                 continue
-            label = pane.get("label") or pane.get("title") or pane_id
+            label = (
+                pane.get("label")
+                or pane.get("terminal_title_stripped")
+                or pane.get("title")
+                or pane_id
+            )
             sessions.append(HerdrSessionInfo(pane_id=pane_id, label=label))
         return sessions
 
