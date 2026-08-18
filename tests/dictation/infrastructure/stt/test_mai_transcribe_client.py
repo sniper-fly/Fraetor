@@ -207,9 +207,10 @@ class TestFlush:
         await client.start()
         client.feed_audio(b"\x01\x02\x03\x04")
 
-        await client.flush(trim_before_sample=None)
+        text = await client.flush(trim_before_sample=None)
 
         assert _sent_frames(mock_sdk_client) == b"\x01\x02\x03\x04"
+        assert text == "セグメント1"
         assert queue.get_nowait() == {"type": "recognized", "text": "セグメント1"}
 
     async def test_offset_advances_across_multiple_cycles(self) -> None:
@@ -266,9 +267,10 @@ class TestFlush:
         client, mock_sdk_client = _make_client(queue)
         await client.start()
 
-        await client.flush(trim_before_sample=None)
+        text = await client.flush(trim_before_sample=None)
 
         mock_sdk_client.transcribe.assert_not_called()
+        assert text == ""
         assert queue.empty()
 
     async def test_trim_beyond_buffer_skips_transcribe(self) -> None:
@@ -277,9 +279,10 @@ class TestFlush:
         await client.start()
         client.feed_audio(b"\x01\x02")
 
-        await client.flush(trim_before_sample=100)
+        text = await client.flush(trim_before_sample=100)
 
         mock_sdk_client.transcribe.assert_not_called()
+        assert text == ""
 
     async def test_failure_does_not_raise_and_advances_offset(self) -> None:
         """送信失敗は伝播せず、その区間は諦める (次回に再送しない)。
@@ -293,8 +296,9 @@ class TestFlush:
         await client.start()
         client.feed_audio(b"\x01\x02")
 
-        await client.flush(trim_before_sample=None)
+        text = await client.flush(trim_before_sample=None)
 
+        assert text == ""
         assert queue.empty()
 
         _stub_transcribe(mock_sdk_client, "2回目")
@@ -310,6 +314,7 @@ class TestFlush:
         await client.start()
         client.feed_audio(b"\x01\x02")
 
-        await client.flush(trim_before_sample=None)
+        text = await client.flush(trim_before_sample=None)
 
+        assert text == ""
         assert queue.empty()

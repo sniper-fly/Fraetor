@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 from src.dictation.application.segment_accumulator import SegmentAccumulator
 from src.dictation.domain.models import RecordingSession
@@ -70,6 +71,49 @@ class TestHandleEvent:
         await accumulator.handle_event(
             None, {"type": "recognized", "text": "無視される"}
         )
+
+    async def test_recognized_passes_through_text_transform(self) -> None:
+        """recognizedイベントのテキストはSegment生成前にtransformされる。"""
+        broadcaster = SSEBroadcaster()
+        sub = broadcaster.subscribe()
+        text_transform = AsyncMock()
+        text_transform.transform = AsyncMock(return_value="変換後")
+        accumulator = SegmentAccumulator(broadcaster, text_transform=text_transform)
+        session = _make_session()
+
+        await accumulator.handle_event(
+            session, {"type": "recognized", "text": "変換前"}
+        )
+
+        text_transform.transform.assert_awaited_once_with("session-1", "変換前")
+        assert session.segments[0].text == "変換後"
+        msg = sub.get_nowait()
+        data = json.loads(msg["data"])
+        assert data["text"] == "変換後"
+
+    async def test_interim_does_not_invoke_text_transform(self) -> None:
+        broadcaster = SSEBroadcaster()
+        text_transform = AsyncMock()
+        text_transform.transform = AsyncMock(return_value="変換後")
+        accumulator = SegmentAccumulator(broadcaster, text_transform=text_transform)
+        session = _make_session()
+
+        await accumulator.handle_event(session, {"type": "interim", "text": "中間"})
+
+        text_transform.transform.assert_not_awaited()
+
+    async def test_none_text_transform_leaves_existing_behavior_unaffected(
+        self,
+    ) -> None:
+        broadcaster = SSEBroadcaster()
+        accumulator = SegmentAccumulator(broadcaster)
+        session = _make_session()
+
+        await accumulator.handle_event(
+            session, {"type": "recognized", "text": "そのまま"}
+        )
+
+        assert session.segments[0].text == "そのまま"
 
 
 class TestDrain:

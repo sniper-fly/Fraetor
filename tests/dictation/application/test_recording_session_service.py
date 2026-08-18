@@ -380,16 +380,17 @@ class TestIncrementalSegments:
         coordinator = service._audio_pipeline
         call_count = 0
 
-        async def flush(*, trim_before_sample: int | None) -> None:
+        async def flush(*, trim_before_sample: int | None) -> str:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 # 発話1: 処理(HTTP応答)が遅い長い発話を想定
                 await asyncio.sleep(0.05)
                 event_queue.put_nowait({"type": "recognized", "text": "発話1"})
-            else:
-                # 発話2: 即座に応答が返る短い発話を想定
-                event_queue.put_nowait({"type": "recognized", "text": "発話2"})
+                return "発話1"
+            # 発話2: 即座に応答が返る短い発話を想定
+            event_queue.put_nowait({"type": "recognized", "text": "発話2"})
+            return "発話2"
 
         mock_stt.flush = AsyncMock(side_effect=flush)
 

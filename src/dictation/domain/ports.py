@@ -60,7 +60,7 @@ class SttEnginePort(ABC):
         """PCM音声データを送る (16kHz/16bit/mono)。"""
 
     @abstractmethod
-    async def flush(self, *, trim_before_sample: int | None) -> None:
+    async def flush(self, *, trim_before_sample: int | None) -> str:
         """未送信の音声のうち trim_before_sample 以降を1セグメントとして認識する。
 
         結果は stop() と同じく recognized イベントとして queue に投入する。
@@ -69,6 +69,9 @@ class SttEnginePort(ABC):
 
         送るべき新規音声がなければ何もしない。失敗しても例外は伝播させず、
         そのセグメントのテキストを失うだけに留める (録音は継続する)。
+
+        戻り値は認識結果テキスト (空文字列可)。空文字列の場合は recognized
+        イベントは発行されていない。
         """
 
     @abstractmethod
@@ -100,6 +103,31 @@ class SpeechActivityDetectorPort(ABC):
     @abstractmethod
     def feed(self, pcm_bytes: bytes) -> None:
         """PCM (16kHz/16bit/mono) を受け取り、発話区間を検出する。"""
+
+
+class SegmentLifecycleHookPort(ABC):
+    """発話区切りの生成タイミングに対する外部フック(意図翻訳レイヤー用の拡張点)。"""
+
+    @abstractmethod
+    def on_speech_start(self) -> None:
+        """発話開始検知の瞬間(未flush区間で最初の1回のみ)に呼ばれる。"""
+
+    @abstractmethod
+    def on_flush(self, *, produced_text: bool) -> None:
+        """flush完了直後に呼ばれる。produced_textはrecognizedイベントが
+        発行される見込みか(認識結果が空でなかったか)を示す。"""
+
+    @abstractmethod
+    def reset(self) -> None:
+        """セッション開始時に呼ばれる。前セッションの状態を残さない。"""
+
+
+class RecognizedTextTransformPort(ABC):
+    """recognizedイベントのテキストに対する変換フック。"""
+
+    @abstractmethod
+    async def transform(self, session_id: str, text: str) -> str:
+        """テキストを必要に応じて変換して返す。変換不要/失敗時は元のテキストを返す。"""
 
 
 class EventBroadcasterPort(ABC):

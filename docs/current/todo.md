@@ -1,14 +1,14 @@
 ## phase1: dictationモジュールの拡張点追加
 目的: `intent_translation`モジュールがまだ存在しない状態で、`dictation`側に汎用フックポートと`SttEnginePort.flush()`の戻り値変更を先に入れる。フックは`None`許容のオプショナル依存とし、既存動作(フック未注入時)を変えない。
 
-- [ ] `src/dictation/domain/ports.py`  # `SegmentLifecycleHookPort`(on_speech_start/on_flush(produced_text)/reset)、`RecognizedTextTransformPort`(transform)を追加。`SttEnginePort.flush()`の戻り値を`None`から`str`に変更(docstring含む)
-- [ ] `src/dictation/infrastructure/stt/mai_transcribe_client.py`  # `flush()`が計算済みの`text`を返すよう変更(空送信時は`""`を返す)
-- [ ] `src/dictation/application/audio_pipeline_coordinator.py`  # `__init__`に`segment_lifecycle_hook: SegmentLifecycleHookPort | None = None`を追加。`start()`で`reset()`呼び出し、`_on_audio_chunk`の発話開始検知箇所で`on_speech_start()`呼び出し、`_flush_segment`で`flush()`の戻り値を受けて`on_flush(produced_text=bool(text))`呼び出し。`stop()`は変更しない(理由はspec.md「設計上の修正」節参照)
-- [ ] `src/dictation/application/segment_accumulator.py`  # `__init__`に`text_transform: RecognizedTextTransformPort | None = None`を追加。`handle_event`の`"recognized"`分岐で`Segment`生成前に`transform(session.id, text)`を通す
-- [ ] `tests/dictation/application/test_audio_pipeline_coordinator.py`  # `segment_lifecycle_hook`のMagicMockを注入し、`reset`/`on_speech_start`(初回検知のみ)/`on_flush(produced_text=True/False)`が正しいタイミングで呼ばれること、`None`時に既存テストが全通ることを検証
-- [ ] `tests/dictation/application/test_segment_accumulator.py`  # `text_transform`のAsyncMockを注入し、`recognized`イベントで`transform`が呼ばれ戻り値が`Segment.text`になること、`interim`イベントでは呼ばれないこと、`None`時に既存テストが全通ることを検証
-- [ ] `tests/dictation/application/test_recording_session_service.py`  # 383行目付近のインライン`flush`フェイクの戻り値を`-> str`(空文字列を返す)に変更し、既存テストが崩れないことを確認
-- [ ] `tests/dictation/infrastructure/stt/test_mai_transcribe_client.py`  # `flush()`が認識結果テキストを返すこと/空文字列を返すことのテストを追加
+- [x] `src/dictation/domain/ports.py`  # `SegmentLifecycleHookPort`(on_speech_start/on_flush(produced_text)/reset)、`RecognizedTextTransformPort`(transform)を追加。`SttEnginePort.flush()`の戻り値を`None`から`str`に変更(docstring含む)
+- [x] `src/dictation/infrastructure/stt/mai_transcribe_client.py`  # `flush()`が計算済みの`text`を返すよう変更(空送信時は`""`を返す)
+- [x] `src/dictation/application/audio_pipeline_coordinator.py`  # `__init__`に`segment_lifecycle_hook: SegmentLifecycleHookPort | None = None`を追加。`start()`で`reset()`呼び出し、`_on_audio_chunk`の発話開始検知箇所で`on_speech_start()`呼び出し、`_flush_segment`で`flush()`の戻り値を受けて`on_flush(produced_text=bool(text))`呼び出し。`stop()`は変更しない(理由はspec.md「設計上の修正」節参照)
+- [x] `src/dictation/application/segment_accumulator.py`  # `__init__`に`text_transform: RecognizedTextTransformPort | None = None`を追加。`handle_event`の`"recognized"`分岐で`Segment`生成前に`transform(session.id, text)`を通す
+- [x] `tests/dictation/application/test_audio_pipeline_coordinator.py`  # `segment_lifecycle_hook`のMagicMockを注入し、`reset`/`on_speech_start`(初回検知のみ)/`on_flush(produced_text=True/False)`が正しいタイミングで呼ばれること、`None`時に既存テストが全通ることを検証
+- [x] `tests/dictation/application/test_segment_accumulator.py`  # `text_transform`のAsyncMockを注入し、`recognized`イベントで`transform`が呼ばれ戻り値が`Segment.text`になること、`interim`イベントでは呼ばれないこと、`None`時に既存テストが全通ることを検証
+- [x] `tests/dictation/application/test_recording_session_service.py`  # 383行目付近のインライン`flush`フェイクの戻り値を`-> str`(空文字列を返す)に変更し、既存テストが崩れないことを確認
+- [x] `tests/dictation/infrastructure/stt/test_mai_transcribe_client.py`  # `flush()`が認識結果テキストを返すこと/空文字列を返すことのテストを追加
 
 ## phase2: intent_translationモジュールの新設
 目的: `docs/current/spec.md`の確定システムプロンプト・API仕様(`max_completion_tokens`必須等)に基づき、`proofreading`モジュールと同型の4層構成(domain/application/infrastructure)で`intent_translation`モジュール本体を実装する。この時点では`dictation`/`containers.py`とは未接続(単体で完結)。

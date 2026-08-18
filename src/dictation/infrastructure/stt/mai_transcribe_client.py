@@ -79,13 +79,14 @@ class MaiTranscribeClient(SttEnginePort):
         with self._lock:
             self._buffer.extend(buffer)
 
-    async def flush(self, *, trim_before_sample: int | None) -> None:
+    async def flush(self, *, trim_before_sample: int | None) -> str:
         """未送信区間を1セグメントとして送信する。バッファは解放しない。"""
         wav_bytes = self._extract_pending_wav(trim_before_sample)
         if not wav_bytes:
-            return
+            return ""
         text = await self._transcribe(wav_bytes, phase="flush")
         logger.info("MAI Transcribe flushed (chars=%d)", len(text or ""))
+        return text
 
     async def stop(self) -> None:
         # 残っている未送信分をすべて最終セグメントとして送る。無音区切りが

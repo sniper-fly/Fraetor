@@ -7,7 +7,10 @@ from src.dictation.domain.models import Segment
 
 if TYPE_CHECKING:
     from src.dictation.domain.models import RecordingSession
-    from src.dictation.domain.ports import EventBroadcasterPort
+    from src.dictation.domain.ports import (
+        EventBroadcasterPort,
+        RecognizedTextTransformPort,
+    )
 
 
 class SegmentAccumulator:
@@ -18,8 +21,13 @@ class SegmentAccumulator:
     (`TranscriptionQueue`) の双方から共通に呼び出せる。
     """
 
-    def __init__(self, broadcaster: EventBroadcasterPort) -> None:
+    def __init__(
+        self,
+        broadcaster: EventBroadcasterPort,
+        text_transform: RecognizedTextTransformPort | None = None,
+    ) -> None:
         self._broadcaster = broadcaster
+        self._text_transform = text_transform
 
     async def handle_event(
         self, session: RecordingSession | None, event: dict[str, str]
@@ -32,7 +40,10 @@ class SegmentAccumulator:
         elif event["type"] == "recognized":
             if session is None:
                 return
-            segment = Segment(id=len(session.segments), text=event["text"])
+            text = event["text"]
+            if self._text_transform is not None:
+                text = await self._text_transform.transform(session.id, text)
+            segment = Segment(id=len(session.segments), text=text)
             session.segments.append(segment)
             await self._broadcaster.broadcast(
                 "recognized",

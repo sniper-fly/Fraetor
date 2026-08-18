@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
     from src.dictation.domain.ports import (
         AudioCapturePort,
+        SegmentLifecycleHookPort,
         SpeechActivityDetectorPort,
         SttEnginePort,
     )
@@ -45,11 +46,13 @@ class AudioPipelineCoordinator:
         stt_engine_factory: Callable[[asyncio.Queue[dict[str, str]]], SttEnginePort],
         vad_factory: Callable[[], SpeechActivityDetectorPort],
         segment_silence_sec_fn: Callable[[], float],
+        segment_lifecycle_hook: SegmentLifecycleHookPort | None = None,
     ) -> None:
         self._audio_capture = audio_capture
         self._stt_engine_factory = stt_engine_factory
         self._vad_factory = vad_factory
         self._segment_silence_sec_fn = segment_silence_sec_fn
+        self._segment_lifecycle_hook = segment_lifecycle_hook
         self._stt_client: SttEnginePort | None = None
         self._event_queue: asyncio.Queue[dict[str, str]] | None = None
         self._vad: SpeechActivityDetectorPort | None = None
@@ -82,6 +85,8 @@ class AudioPipelineCoordinator:
         """STT接続 → マイクキャプチャ開始。失敗時は例外を伝播する。"""
         self._session_start_time = time.monotonic()
         self._pending_speech_start_sample = None
+        if self._segment_lifecycle_hook:
+            self._segment_lifecycle_hook.reset()
         self._event_queue = asyncio.Queue()
         self._stt_client = self._stt_engine_factory(self._event_queue)
         try:
@@ -160,7 +165,9 @@ class AudioPipelineCoordinator:
         async with self._flush_lock:
             trim_before_sample = self._pending_speech_start_sample
             self._pending_speech_start_sample = None
-            await stt_client.flush(trim_before_sample=trim_before_sample)
+            text = await stt_client.flush(trim_before_sample=trim_before_sample)
+            if self._segment_lifecycle_hook:
+                self._segment_lifecycle_hook.on_flush(produced_text=bool(text))
 
     def _on_audio_chunk(self, buffer: bytes) -> None:
         """PCMチャンクをSTTとVADの両方に転送する。
@@ -176,3 +183,5 @@ class AudioPipelineCoordinator:
             start = self._vad.last_speech_start_sample
             if start is not None and self._pending_speech_start_sample is None:
                 self._pending_speech_start_sample = start
+                if self._segment_lifecycle_hook:
+                    self._segment_lifecycle_hook.on_speech_start()

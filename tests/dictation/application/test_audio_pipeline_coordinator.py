@@ -347,6 +347,95 @@ class TestSegmentFlush:
         mock_stt.flush.assert_awaited_once_with(trim_before_sample=1000)
 
 
+class TestSegmentLifecycleHook:
+    async def test_start_calls_reset(self) -> None:
+        """start() は毎セッションでフックの reset() を呼ぶ。"""
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        mock_hook = MagicMock()
+        coordinator = AudioPipelineCoordinator(
+            mock_audio,
+            lambda _q: mock_stt,
+            lambda: mock_vad,
+            lambda: _NEVER_FIRES_SEC,
+            segment_lifecycle_hook=mock_hook,
+        )
+
+        await coordinator.start()
+
+        mock_hook.reset.assert_called_once()
+
+    async def test_speech_start_triggers_hook_only_once(self) -> None:
+        """未flush区間で最初の発話検知のみ on_speech_start が呼ばれる。"""
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        mock_vad.last_speech_start_sample = 1000
+        mock_hook = MagicMock()
+        coordinator = AudioPipelineCoordinator(
+            mock_audio,
+            lambda _q: mock_stt,
+            lambda: mock_vad,
+            lambda: _NEVER_FIRES_SEC,
+            segment_lifecycle_hook=mock_hook,
+        )
+        await coordinator.start()
+
+        coordinator._on_audio_chunk(b"chunk-a")
+        coordinator._on_audio_chunk(b"chunk-a-again")
+
+        mock_hook.on_speech_start.assert_called_once()
+
+    async def test_flush_with_text_calls_on_flush_with_true(self) -> None:
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        mock_stt.flush = AsyncMock(return_value="認識結果")
+        mock_vad.last_speech_start_sample = 1000
+        mock_hook = MagicMock()
+        coordinator = AudioPipelineCoordinator(
+            mock_audio,
+            lambda _q: mock_stt,
+            lambda: mock_vad,
+            lambda: _NEVER_FIRES_SEC,
+            segment_lifecycle_hook=mock_hook,
+        )
+        await coordinator.start()
+        coordinator._on_audio_chunk(b"chunk")
+
+        await coordinator._flush_segment()
+
+        mock_hook.on_flush.assert_called_once_with(produced_text=True)
+
+    async def test_flush_with_empty_text_calls_on_flush_with_false(self) -> None:
+        """認識結果が空 (recognizedイベント未発行) の場合は produced_text=False。"""
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        mock_stt.flush = AsyncMock(return_value="")
+        mock_vad.last_speech_start_sample = 1000
+        mock_hook = MagicMock()
+        coordinator = AudioPipelineCoordinator(
+            mock_audio,
+            lambda _q: mock_stt,
+            lambda: mock_vad,
+            lambda: _NEVER_FIRES_SEC,
+            segment_lifecycle_hook=mock_hook,
+        )
+        await coordinator.start()
+        coordinator._on_audio_chunk(b"chunk")
+
+        await coordinator._flush_segment()
+
+        mock_hook.on_flush.assert_called_once_with(produced_text=False)
+
+    async def test_none_hook_leaves_existing_flow_unaffected(self) -> None:
+        """フック未注入 (None) でも既存の flush 挙動は変わらない。"""
+        mock_stt, mock_vad, mock_audio = _setup_mocks()
+        mock_stt.flush = AsyncMock(return_value="認識結果")
+        mock_vad.last_speech_start_sample = 1000
+        coordinator = _make_coordinator(mock_audio, mock_stt, mock_vad)
+        await coordinator.start()
+        coordinator._on_audio_chunk(b"chunk")
+
+        await coordinator._flush_segment()
+
+        mock_stt.flush.assert_awaited_once_with(trim_before_sample=1000)
+
+
 class TestLastSpeechTime:
     async def test_returns_session_start_time_before_start(self) -> None:
         _, mock_vad, mock_audio = _setup_mocks()
