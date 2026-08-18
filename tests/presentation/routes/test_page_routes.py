@@ -25,12 +25,6 @@ class TestIndex:
 # 撮影の有無をサーバー側で判断する必要があるため、汎用フォームではなく
 # 専用トグルボタンで操作する設計 (docs/current/spec.md 参照)。
 _FORM_EXCLUDED_FIELDS = {"intent_translation_enabled"}
-# docs/current/todo.md phase3 でのUI実装まで未接続。SETTINGS_FIELDS に
-# 追加されたらこの除外リストから外す。
-_PENDING_PHASE3_FIELDS = {
-    "screenshot_monitor_index",
-    "intent_translation_timeout_sec",
-}
 
 
 class TestSettingsTabMarkup:
@@ -48,11 +42,7 @@ class TestSettingsTabMarkup:
     ) -> None:
         html = client.get("/").text
         js_keys = set(re.findall(r"\{ key: '(\w+)'", html))
-        expected = (
-            set(DynamicSettings.model_fields)
-            - _FORM_EXCLUDED_FIELDS
-            - _PENDING_PHASE3_FIELDS
-        )
+        expected = set(DynamicSettings.model_fields) - _FORM_EXCLUDED_FIELDS
 
         assert js_keys == expected
 

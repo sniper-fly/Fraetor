@@ -33,6 +33,11 @@
           <button id="proofread-toggle" onclick="toggleProofread()"
             class="px-2 py-0.5 rounded text-xs font-medium bg-green-600 text-white">ON</button>
         </div>
+        <div class="flex items-center gap-2">
+          <span class="text-sm">意図翻訳:</span>
+          <button id="intent-translation-toggle" onclick="toggleIntentTranslation()"
+            class="px-2 py-0.5 rounded text-xs font-medium bg-gray-600 text-gray-300">OFF</button>
+        </div>
       </div>
       <div class="flex items-center gap-6">
         <button id="btn-copy-main" onclick="copyMainText()"
@@ -409,6 +414,7 @@ async function initMaxBlocks() {
     if (typeof settings.herdr_slot_count === 'number' && settings.herdr_slot_count > 0) {
       maxBlocks = settings.herdr_slot_count;
     }
+    updateIntentTranslationUI(settings.intent_translation_enabled ?? false);
   } catch {
     // 取得失敗時は既定値のまま
   }
@@ -547,6 +553,8 @@ const SETTINGS_FIELDS = [
   { key: 'shutdown_delay_sec', label: '終了までの遅延', unit: '秒', step: '0.1' },
   { key: 'sse_keepalive_sec', label: 'SSEキープアライブ間隔', unit: '秒', step: '1' },
   { key: 'herdr_slot_count', label: 'Herdr表示ブロック数', unit: '件', step: '1' },
+  { key: 'screenshot_monitor_index', label: '意図翻訳: 撮影対象モニタ番号', unit: '', step: '1' },
+  { key: 'intent_translation_timeout_sec', label: '意図翻訳タイムアウト', unit: '秒', step: '1' },
 ];
 
 // GET のレスポンス全体。PUT は全項目差し替えなので、フォームに出していない
@@ -650,6 +658,44 @@ function updateProofreadUI(enabled) {
   } else {
     btn.textContent = 'OFF';
     btn.className = 'px-2 py-0.5 rounded text-xs font-medium bg-gray-600 text-gray-300';
+  }
+}
+
+// --- 意図翻訳トグル ---
+// 校正トグルとは異なり localStorage を持たず、`DynamicSettings.intent_translation_enabled`
+// (サーバー側) を真実源とする (撮影の有無をサーバー側で判断する必要があるため)。
+function updateIntentTranslationUI(enabled) {
+  const btn = document.getElementById('intent-translation-toggle');
+  if (enabled) {
+    btn.textContent = 'ON';
+    btn.className = 'px-2 py-0.5 rounded text-xs font-medium bg-green-600 text-white';
+  } else {
+    btn.textContent = 'OFF';
+    btn.className = 'px-2 py-0.5 rounded text-xs font-medium bg-gray-600 text-gray-300';
+  }
+}
+
+async function toggleIntentTranslation() {
+  const btn = document.getElementById('intent-translation-toggle');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/settings');
+    const settings = await res.json();
+    settings.intent_translation_enabled = !settings.intent_translation_enabled;
+    const putRes = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (putRes.ok) {
+      const data = await putRes.json();
+      updateIntentTranslationUI(data.intent_translation_enabled);
+      if (loadedSettings) loadedSettings.intent_translation_enabled = data.intent_translation_enabled;
+    }
+  } catch {
+    // 取得/更新失敗時は表示を変えない
+  } finally {
+    btn.disabled = false;
   }
 }
 

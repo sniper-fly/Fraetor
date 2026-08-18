@@ -76,6 +76,41 @@ class TestContainer:
 
         assert container.proofreader() is None
 
+    def test_intent_translator_is_none_without_mai_credentials(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for var in (
+            "FRAETOR_SSM_MAI_API_KEY",
+            "FRAETOR_SSM_MAI_ENDPOINT",
+            "FRAETOR_SSM_VERTEX_SA",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        container = Container()
+
+        assert container.intent_translator() is None
+
+    def test_audio_pipeline_coordinator_receives_intent_translation_hook(
+        self,
+    ) -> None:
+        container = Container()
+
+        coordinator = container.audio_pipeline_coordinator()
+
+        assert (
+            coordinator._segment_lifecycle_hook
+            is container.intent_translation_dictation_adapter()
+        )
+
+    def test_segment_accumulator_receives_intent_translation_hook(self) -> None:
+        container = Container()
+
+        accumulator = container.segment_accumulator()
+
+        assert (
+            accumulator._text_transform
+            is container.intent_translation_dictation_adapter()
+        )
+
     def test_stt_engine_factory_creates_new_instance_each_call(self) -> None:
         """delegationで取得したFactoryを呼ぶたびに新規インスタンスを生成する。
 
@@ -131,6 +166,20 @@ class TestSettingsRepositoryWiring:
         use_case = container.proofread_text_use_case()
 
         assert use_case._settings_repository is container.settings_repository()
+
+    def test_intent_translation_use_case_receives_repository(self) -> None:
+        container = Container()
+
+        use_case = container.intent_translation_use_case()
+
+        assert use_case._settings_repository is container.settings_repository()
+
+    def test_segment_screenshot_pairer_receives_repository(self) -> None:
+        container = Container()
+
+        pairer = container.segment_screenshot_pairer()
+
+        assert pairer._settings_repository is container.settings_repository()
 
     def test_segment_silence_sec_is_read_at_call_time(self) -> None:
         """コーディネータは Singleton なので、閾値は callable 経由で都度読む。

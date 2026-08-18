@@ -57,6 +57,26 @@ class TestUpdateSettings:
 
         assert repo.get().vad_threshold == 0.8
 
+    def test_intent_translation_fields_are_persisted_through_repository(
+        self, client: TestClient
+    ) -> None:
+        repo: SettingsRepositoryPort = client.app.state.settings_repository  # type: ignore[attr-defined]
+
+        response = client.put(
+            "/api/settings",
+            json=_valid_payload(
+                intent_translation_enabled=True,
+                screenshot_monitor_index=2,
+                intent_translation_timeout_sec=30,
+            ),
+        )
+
+        assert response.status_code == 200
+        settings = repo.get()
+        assert settings.intent_translation_enabled is True
+        assert settings.screenshot_monitor_index == 2
+        assert settings.intent_translation_timeout_sec == 30
+
     def test_silence_threshold_inversion_returns_422(self, client: TestClient) -> None:
         """`segment_silence_sec >= silence_timeout_sec` は 422 で弾く。
 

@@ -20,6 +20,21 @@ from src.dictation.infrastructure.audio.factory import create_audio_capture
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 from src.dictation.infrastructure.stt.factory import create_stt_engine
 from src.dictation.infrastructure.vad.factory import create_vad
+from src.intent_translation.application.dictation_hook_adapter import (
+    IntentTranslationDictationAdapter,
+)
+from src.intent_translation.application.intent_translation_use_case import (
+    IntentTranslationUseCase,
+)
+from src.intent_translation.application.segment_screenshot_pairer import (
+    SegmentScreenshotPairer,
+)
+from src.intent_translation.infrastructure.azure_openai_intent_translator import (
+    AzureOpenAIIntentTranslator,
+)
+from src.intent_translation.infrastructure.screenshot.mss_screenshot_capturer import (
+    MssScreenshotCapturer,
+)
 from src.proofreading.application.proofread_text_use_case import ProofreadTextUseCase
 from src.proofreading.infrastructure.vertex_gemini_proofreader import (
     VertexGeminiProofreader,
@@ -105,6 +120,31 @@ def _create_proofreader(
     )
 
 
+def _create_intent_translator(
+    *,
+    mai_api_key: str,
+    mai_endpoint: str,
+    deployment: str,
+    api_version: str,
+    prompt: str,
+) -> AzureOpenAIIntentTranslator | None:
+    """MAI用シークレットを流用してAzure OpenAI互換クライアントを生成する。
+
+    同一Azureリソースを STT (MaiTranscribeClient) とチャット補完 (意図翻訳)
+    の両方で使うため、専用のシークレットは追加せず mai_api_key/mai_endpoint
+    をそのまま使う。
+    """
+    if not mai_api_key or not mai_endpoint:
+        return None
+    return AzureOpenAIIntentTranslator(
+        endpoint=mai_endpoint,
+        api_key=mai_api_key,
+        deployment=deployment,
+        api_version=api_version,
+        prompt=prompt,
+    )
+
+
 class Container(containers.DeclarativeContainer):
     """アプリケーション全体のDIコンテナ。
 
@@ -151,6 +191,35 @@ class Container(containers.DeclarativeContainer):
         sample_rate=settings.provided.stt_sample_rate,
     ).provider
 
+    screenshot_capture = providers.Singleton(MssScreenshotCapturer)
+
+    segment_screenshot_pairer = providers.Singleton(
+        SegmentScreenshotPairer,
+        screenshot_capture=screenshot_capture,
+        settings_repository=settings_repository,
+    )
+
+    intent_translator = providers.Singleton(
+        _create_intent_translator,
+        mai_api_key=secrets.provided.mai_api_key,
+        mai_endpoint=secrets.provided.mai_endpoint,
+        deployment=settings.provided.intent_translation_model_name,
+        api_version=settings.provided.azure_openai_api_version,
+        prompt=settings.provided.intent_translation_prompt,
+    )
+
+    intent_translation_use_case = providers.Singleton(
+        IntentTranslationUseCase,
+        translator=intent_translator,
+        settings_repository=settings_repository,
+    )
+
+    intent_translation_dictation_adapter = providers.Singleton(
+        IntentTranslationDictationAdapter,
+        pairer=segment_screenshot_pairer,
+        use_case=intent_translation_use_case,
+    )
+
     audio_pipeline_coordinator = providers.Singleton(
         AudioPipelineCoordinator,
         audio_capture=audio_capture,
@@ -159,10 +228,13 @@ class Container(containers.DeclarativeContainer):
         segment_silence_sec_fn=providers.Callable(
             _segment_silence_sec_fn, settings_repository=settings_repository
         ),
+        segment_lifecycle_hook=intent_translation_dictation_adapter,
     )
 
     segment_accumulator = providers.Singleton(
-        SegmentAccumulator, broadcaster=broadcaster
+        SegmentAccumulator,
+        broadcaster=broadcaster,
+        text_transform=intent_translation_dictation_adapter,
     )
 
     stt_event_relay = providers.Singleton(

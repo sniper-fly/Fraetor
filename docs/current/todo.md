@@ -36,10 +36,13 @@ phase3の一部を先に済ませた): `src/shared/config/dynamic_settings.py`�
 目的: phase1のフックとphase2のモジュールを`containers.py`で接続し、設定項目とフロントエンドトグルを追加して機能を有効化する。ドキュメント(`docs/image_recognition_prompt.md`)への反映もこのフェーズで行う。
 
 - [x] `src/shared/config/dynamic_settings.py`  # `intent_translation_enabled: bool = False`、`screenshot_monitor_index: int = Field(default=1, ge=0)`、`intent_translation_timeout_sec: int = Field(default=20, gt=0)`を追加 (phase2で前倒し実施済み)
-- [ ] `src/shared/config/settings.py`  # `azure_openai_api_version`、`intent_translation_model_name`、`intent_translation_prompt`(spec.md記載の確定システムプロンプトを定数化)を追加
-- [ ] `src/containers.py`  # `_create_intent_translator`ファクトリ、`screenshot_capture`/`segment_screenshot_pairer`/`intent_translator`/`intent_translation_use_case`/`intent_translation_dictation_adapter`のProvider追加。既存`audio_pipeline_coordinator`/`segment_accumulator`のProviderに`segment_lifecycle_hook`/`text_transform`を接続
-- [ ] `src/templates/index.html`  # 意図翻訳ON/OFFトグル(サーバー側`DynamicSettings.intent_translation_enabled`が真実源、`PUT /api/settings`を再利用)、`SETTINGS_FIELDS`に`screenshot_monitor_index`/`intent_translation_timeout_sec`を追加。追加後は`tests/presentation/routes/test_page_routes.py`の`_PENDING_PHASE3_FIELDS`からこの2項目を外す
+- [x] `src/shared/config/settings.py`  # `azure_openai_api_version`、`intent_translation_model_name`、`intent_translation_prompt`(spec.md記載の確定システムプロンプトを定数化)を追加
+- [x] `src/containers.py`  # `_create_intent_translator`ファクトリ、`screenshot_capture`/`segment_screenshot_pairer`/`intent_translator`/`intent_translation_use_case`/`intent_translation_dictation_adapter`のProvider追加。既存`audio_pipeline_coordinator`/`segment_accumulator`のProviderに`segment_lifecycle_hook`/`text_transform`を接続
+- [x] `src/templates/index.html`  # 意図翻訳ON/OFFトグル(サーバー側`DynamicSettings.intent_translation_enabled`が真実源、`PUT /api/settings`を再利用)、`SETTINGS_FIELDS`に`screenshot_monitor_index`/`intent_translation_timeout_sec`を追加。追加後は`tests/presentation/routes/test_page_routes.py`の`_PENDING_PHASE3_FIELDS`からこの2項目を外す
 - [x] `pyproject.toml`  # `uv add openai` / `uv add mss`。`[[tool.mypy.overrides]]`に`module = "mss.*"`の`ignore_missing_imports = true`を追加 (phase2で前倒し実施済み)
-- [ ] `tests/test_containers.py`  # `test_intent_translator_is_none_without_mai_credentials`等、既存`test_proofreader_is_none_without_vertex_credentials`と対になるテストを追加
-- [ ] `tests/presentation/routes/test_settings_routes.py`  # 新規3フィールドの更新確認を1〜2件追記
-- [ ] 実装完了後、`docs/image_recognition_prompt.md`§5.6の未指定事項のうち本実装で解決した項目(撮影間隔・撮影タイミング・保存方針・切替方法・タイムアウト・校正との関係・マルチモニタ対応方針)を反映するかどうかをユーザーに確認し、合意が取れれば反映する
+- [x] `tests/test_containers.py`  # `test_intent_translator_is_none_without_mai_credentials`等、既存`test_proofreader_is_none_without_vertex_credentials`と対になるテストを追加
+- [x] `tests/presentation/routes/test_settings_routes.py`  # 新規3フィールドの更新確認を1〜2件追記
+- [x] 実装完了後、`docs/image_recognition_prompt.md`§5.6の未指定事項のうち本実装で解決した項目(撮影間隔・撮影タイミング・保存方針・切替方法・タイムアウト・校正との関係・マルチモニタ対応方針)を反映するかどうかをユーザーに確認し、合意が取れれば反映する
+  (確認結果: `docs/image_recognition_prompt.md`はリポジトリ内に存在せず、gitの履歴にも
+  存在した形跡がない。spec.md/todo.mdが参照しているだけで実体がないため、この項目は
+  対象外として完了扱いとする)
