@@ -22,6 +22,17 @@ class TestIndex:
         assert "tailwindcss" in html
 
 
+# 撮影の有無をサーバー側で判断する必要があるため、汎用フォームではなく
+# 専用トグルボタンで操作する設計 (docs/current/spec.md 参照)。
+_FORM_EXCLUDED_FIELDS = {"intent_translation_enabled"}
+# docs/current/todo.md phase3 でのUI実装まで未接続。SETTINGS_FIELDS に
+# 追加されたらこの除外リストから外す。
+_PENDING_PHASE3_FIELDS = {
+    "screenshot_monitor_index",
+    "intent_translation_timeout_sec",
+}
+
+
 class TestSettingsTabMarkup:
     """設定タブの JS 側定義とサーバー側モデルの整合を検証する。
 
@@ -37,8 +48,13 @@ class TestSettingsTabMarkup:
     ) -> None:
         html = client.get("/").text
         js_keys = set(re.findall(r"\{ key: '(\w+)'", html))
+        expected = (
+            set(DynamicSettings.model_fields)
+            - _FORM_EXCLUDED_FIELDS
+            - _PENDING_PHASE3_FIELDS
+        )
 
-        assert js_keys == set(DynamicSettings.model_fields)
+        assert js_keys == expected
 
     def test_every_tab_has_matching_button_and_panel(self, client: TestClient) -> None:
         """`TABS` の各キーに対応する `tab-*`/`panel-*` 要素が存在する。

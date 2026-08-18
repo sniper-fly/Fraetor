@@ -30,6 +30,10 @@ class DynamicSettings(BaseModel):
 
     herdr_slot_count: int = Field(default=4, gt=0)
 
+    intent_translation_enabled: bool = False
+    screenshot_monitor_index: int = Field(default=1, ge=0)
+    intent_translation_timeout_sec: int = Field(default=20, gt=0)
+
     @model_validator(mode="after")
     def _validate_silence_thresholds(self) -> DynamicSettings:
         """無音区切りはセッション無音タイムアウトより短くなければならない。
