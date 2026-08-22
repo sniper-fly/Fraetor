@@ -186,6 +186,13 @@ pyperclip でクリップボードにコピー
   (マイク使用中インジケータが点灯し続ける)
 - ストリームの open/stop/close はブロックし得る同期呼び出しのため、
   どの実装も `asyncio.to_thread` でイベントループから隔離する
+- コールバック内で sink が例外を投げると PortAudio はストリームを無音で
+  abort し、以後何も通知しない。原因調査のため共通実装
+  (`sounddevice_base.py`) で必ずログに残してから再 raise する
+- `PersistentStreamCapture` は CoreAudio 側の要因 (省電力・デバイス切断等)
+  で無音 abort された場合に自己修復する: `start_recording` の度に
+  `stream.active` を確認し、非アクティブなら (close()/stop() は呼ばずに、
+  デッドロックバグを踏まないよう参照を捨てるだけで) 再オープンする
 
 ## 発話区間検出 (VAD)
 

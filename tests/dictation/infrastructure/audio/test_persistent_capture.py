@@ -77,3 +77,36 @@ class TestPersistentStreamCapture:
         await capture.start_recording(MagicMock())
 
         assert capture._stream is not None
+
+    async def test_reopens_without_closing_when_stream_becomes_inactive(
+        self, mock_sd: MagicMock
+    ) -> None:
+        """PortAudio 側で無音 abort された (active=False) 場合、
+        close()/stop() を呼ばずに (デッドロック回避) 新しいストリームへ差し替える"""
+        capture = PersistentStreamCapture(_SAMPLE_RATE)
+        await capture.start_recording(MagicMock())
+        old_stream = capture._stream
+        old_stream.active = False
+        mock_sd.InputStream.reset_mock()
+        new_stream = MagicMock()
+        mock_sd.InputStream.return_value = new_stream
+
+        await capture.start_recording(MagicMock())
+
+        mock_sd.InputStream.assert_called_once()
+        old_stream.close.assert_not_called()
+        old_stream.stop.assert_not_called()
+        assert capture._stream is new_stream
+
+    async def test_stays_on_same_stream_while_active(self, mock_sd: MagicMock) -> None:
+        """active なストリームはそのまま使い続ける (再オープンしない)"""
+        capture = PersistentStreamCapture(_SAMPLE_RATE)
+        await capture.start_recording(MagicMock())
+        active_stream = capture._stream
+        active_stream.active = True
+        mock_sd.InputStream.reset_mock()
+
+        await capture.start_recording(MagicMock())
+
+        mock_sd.InputStream.assert_not_called()
+        assert capture._stream is active_stream

@@ -54,4 +54,10 @@ class SounddeviceCaptureBase(AudioCapturePort):
             logger.warning("Audio capture status: %s", status)
         sink = self._sink
         if sink is not None:
-            sink(indata.tobytes())
+            try:
+                sink(indata.tobytes())
+            except Exception:
+                # PortAudio はコールバック例外を検知するとストリームを無音で
+                # abort し、以後何も通知しない。原因調査のため必ずログに残す。
+                logger.exception("Audio capture sink raised; stream will abort")
+                raise
