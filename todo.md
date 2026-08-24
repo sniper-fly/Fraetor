@@ -90,9 +90,9 @@ flush の完了を待つ。プラン通りに `monitor.stop()` を先に呼ぶ�
 
 - [ ] FastAPIルートで `model_validate()` を手動呼びすると `ValidationError` が捕捉されず500になる問題のlint化
   - 現状: `settings_routes.py` は型付きパラメータ (`body: DynamicSettings`) 化済みで正しいが、`proofread_routes.py:28,37` の2箇所はまだ手動 `model_validate()` を呼んでおり違反している(この2箇所は軽微な実装修正としてその場で直せる)
-  - 課題: `ruff`/`mypy` にはこのFastAPI固有パターンを検知するルールが無く、Fraetorには既存のカスタムlint基盤・PostToolUse/Stopの品質チェックhookも未整備(csp-voc-lambdaの`check_code_quality.sh`相当が無い)
+  - 課題: `ruff`/`mypy` にはこのFastAPI固有パターンを検知するルールが無く、Fraetorには既存のカスタムlint基盤が未整備(csp-voc-lambdaの`tools/`配下相当のプラグインが無い)
   - 検討したい対応案: (A) `.semgrep/warn-manual-model-validate.yml` を1本書いてAST的に検出(semgrepという新規軽量依存が1つ増える) (B) `flake8`のカスタムプラグイン基盤をFraetorに新設し同パターンを検出(Aより新設コストが高いが、csp-voc-lambdaの`tools/`配下の既存プラグインと同型にできる)。**Bの方向で進める。** ただしプラグイン基盤の新設は実装コストが軽くないため、まずこの起票で留め、着手は別途判断する
-  - 背景: いずれの案でも、まずcsp-voc-lambdaと同様にPostToolUse/Stopでruff+mypyを自動実行するhookをFraetorに整備するのが前提として先にある可能性がある(このissue固有の話ではなくFraetorのlint運用全体の話)
+  - 背景: `check_code_quality.sh`をPostToolUse(Edit|Write|MultiEdit)で自動実行するhookは`.claude/settings.json`に整備済み。Stopフックはまだ未整備
 
 ## 完了済み: 初期実装 (Phase 1-9)
 
