@@ -46,15 +46,12 @@ class TestToggleRecording:
 
 class TestEventsSSE:
     async def test_sends_keepalive(self, client: TestClient) -> None:
-        """keepalive間隔経過後にkeepaliveイベントが生成される。
-
-        `sse_keepalive_sec` は秒単位の int なので最短の1秒を使う。
-        """
+        """keepalive間隔経過後にkeepaliveイベントが生成される。"""
         app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
         request = MagicMock()
         request.app.state.app_state = app_state
         request.app.state.settings_repository = InMemorySettingsRepository(
-            DynamicSettings(sse_keepalive_sec=1)
+            DynamicSettings(sse_keepalive_sec=0.05)
         )
 
         response = await events_handler(request)

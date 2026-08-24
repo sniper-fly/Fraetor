@@ -14,25 +14,25 @@ class DynamicSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    max_session_duration_sec: int = Field(default=600, gt=0)
-    silence_timeout_sec: int = Field(default=120, gt=0)
+    max_session_duration_sec: float = Field(default=600, gt=0)
+    silence_timeout_sec: float = Field(default=120, gt=0)
     segment_silence_sec: float = Field(default=3.0, gt=0)
 
     vad_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
     mai_locale: str = "ja"
     mai_model_name: str = "mai-transcribe-1"
-    mai_timeout_sec: int = Field(default=60, gt=0)
+    mai_timeout_sec: float = Field(default=60, gt=0)
 
-    proofread_timeout_sec: int = Field(default=15, gt=0)
+    proofread_timeout_sec: float = Field(default=15, gt=0)
     shutdown_delay_sec: float = Field(default=0.5, gt=0)
-    sse_keepalive_sec: int = Field(default=15, gt=0)
+    sse_keepalive_sec: float = Field(default=15, gt=0)
 
     herdr_slot_count: int = Field(default=4, gt=0)
 
     intent_translation_enabled: bool = False
     screenshot_monitor_index: int = Field(default=1, ge=0)
-    intent_translation_timeout_sec: int = Field(default=20, gt=0)
+    intent_translation_timeout_sec: float = Field(default=20, gt=0)
 
     @model_validator(mode="after")
     def _validate_silence_thresholds(self) -> DynamicSettings:

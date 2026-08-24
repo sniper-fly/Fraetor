@@ -26,8 +26,8 @@ _SILENCE_TIMEOUT_SEC = 120
 
 def _make_service(
     *,
-    max_duration_sec: int = _MAX_DURATION_SEC,
-    silence_timeout_sec: int = _SILENCE_TIMEOUT_SEC,
+    max_duration_sec: float = _MAX_DURATION_SEC,
+    silence_timeout_sec: float = _SILENCE_TIMEOUT_SEC,
     post_processing: bool = False,
     stt_start_side_effect: Exception | None = None,
     audio_start_side_effect: Exception | None = None,
@@ -424,20 +424,20 @@ class TestIncrementalSegments:
 
 
 class TestSessionTimeout:
-    """`DynamicSettings` のタイムアウトは秒単位の int なので、テストでも
-    最短の 1 秒を使う (旧テストの 0.1 秒は表現できない)。
+    """`DynamicSettings` のタイムアウトは float なので、テストでは実時間
+    消費を抑えるため 0.05 秒のような小さい値を使う。
     """
 
     async def test_auto_stops_after_max_duration(self) -> None:
         """最大セッション時間経過 → 超過時は自動で録音停止"""
         service, app_state, mock_stt, queue, _repo = _make_service(
-            max_duration_sec=1, silence_timeout_sec=10
+            max_duration_sec=0.05, silence_timeout_sec=10
         )
 
         await service.start_session()
         assert app_state.recording is True
 
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(0.15)
 
         assert app_state.recording is False
         assert app_state.current_session is None
@@ -448,13 +448,13 @@ class TestSessionTimeout:
     async def test_auto_stops_after_silence_timeout(self) -> None:
         """発話なしのまま silence_timeout_sec 経過 → 自動で録音停止"""
         service, app_state, _, queue, _repo = _make_service(
-            max_duration_sec=10, silence_timeout_sec=1
+            max_duration_sec=10, silence_timeout_sec=0.05
         )
 
         await service.start_session()
         assert app_state.recording is True
 
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(0.15)
 
         assert app_state.recording is False
         assert app_state.current_session is None
@@ -465,7 +465,7 @@ class TestSessionTimeout:
         """`update()` した値は次の `start_session()` から反映される。
 
         1回目のセッションは長いタイムアウトで開始し、その間に設定を
-        1秒へ縮める。1回目は停止せず、停止後に開始した2回目だけが
+        0.05秒へ縮める。1回目は停止せず、停止後に開始した2回目だけが
         新しい値でタイムアウトすることを確認する。
         """
         service, app_state, _, queue, repo = _make_service(
@@ -475,17 +475,17 @@ class TestSessionTimeout:
 
         repo.update(
             DynamicSettings(
-                max_session_duration_sec=1,
+                max_session_duration_sec=0.05,
                 silence_timeout_sec=120,
                 segment_silence_sec=3.0,
             )
         )
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(0.15)
         assert app_state.recording is True, "実行中セッションには反映しない"
 
         await service.stop_session()
         await service.start_session()
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(0.15)
 
         assert app_state.recording is False
 

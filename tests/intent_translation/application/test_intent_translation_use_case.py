@@ -9,9 +9,7 @@ from src.intent_translation.application.intent_translation_use_case import (
 from src.shared.config.dynamic_settings import DynamicSettings
 
 
-def _make_repository(
-    *, enabled: bool = True, timeout_sec: int = 20
-) -> MagicMock:
+def _make_repository(*, enabled: bool = True, timeout_sec: float = 20) -> MagicMock:
     repository = MagicMock()
     repository.get.return_value = DynamicSettings(
         intent_translation_enabled=enabled,
@@ -92,7 +90,7 @@ class TestExecute:
         translator = AsyncMock()
         translator.translate = AsyncMock(side_effect=slow_translate)
         use_case = IntentTranslationUseCase(
-            translator, settings_repository=_make_repository(timeout_sec=1)
+            translator, settings_repository=_make_repository(timeout_sec=0.05)
         )
 
         text, translated = await use_case.execute("元テキスト", b"png")

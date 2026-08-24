@@ -51,11 +51,10 @@ class TestExecute:
 
         mock_proofreader = AsyncMock()
         mock_proofreader.proofread.side_effect = slow_proofread
-        # `proofread_timeout_sec` は秒単位の int なので最短の1秒を使う
         use_case = ProofreadTextUseCase(
             mock_proofreader,
             settings_repository=InMemorySettingsRepository(
-                DynamicSettings(proofread_timeout_sec=1)
+                DynamicSettings(proofread_timeout_sec=0.05)
             ),
         )
 
@@ -75,16 +74,16 @@ class TestDynamicTimeout:
         """
 
         async def slow_proofread(text: str) -> str:
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(0.05)
             return "校正済み:" + text
 
         mock_proofreader = AsyncMock()
         mock_proofreader.proofread.side_effect = slow_proofread
-        repo = InMemorySettingsRepository(DynamicSettings(proofread_timeout_sec=1))
+        repo = InMemorySettingsRepository(DynamicSettings(proofread_timeout_sec=0.01))
         use_case = ProofreadTextUseCase(mock_proofreader, settings_repository=repo)
 
         assert await use_case.execute("A") == ("A", False)
 
-        repo.update(DynamicSettings(proofread_timeout_sec=5))
+        repo.update(DynamicSettings(proofread_timeout_sec=0.3))
 
         assert await use_case.execute("B") == ("校正済み:B", True)
