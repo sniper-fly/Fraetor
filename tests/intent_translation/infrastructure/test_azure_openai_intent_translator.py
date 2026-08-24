@@ -96,7 +96,5 @@ class TestTranslate:
 
         _args, kwargs = mock_client.chat.completions.create.call_args
         user_content = kwargs["messages"][1]["content"]
-        image_part = next(
-            part for part in user_content if part["type"] == "image_url"
-        )
+        image_part = next(part for part in user_content if part["type"] == "image_url")
         assert image_part["image_url"]["url"].startswith("data:image/png;base64,")

@@ -41,9 +41,7 @@ async def _serve_one_response(
 
 
 class TestGetFocusedPane:
-    async def test_parses_focused_pane_from_snapshot(
-        self, short_tmp_dir: Path
-    ) -> None:
+    async def test_parses_focused_pane_from_snapshot(self, short_tmp_dir: Path) -> None:
         """実際のsession.snapshotレスポンスはfocused_pane_id/panesを
         result.snapshot配下にネストする (result直下ではない)。"""
         socket_path = short_tmp_dir / "herdr.sock"
