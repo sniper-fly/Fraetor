@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 from src.dictation.application.app_state import AppState
@@ -293,7 +294,7 @@ class TestStopSession:
 
         mock_stt.flush = AsyncMock(side_effect=slow_flush)
 
-        service._audio_pipeline._vad.last_speech_start_sample = 1000
+        cast("MagicMock", service._audio_pipeline._vad).last_speech_start_sample = 1000
         service._audio_pipeline._on_audio_chunk(b"chunk")
         flush_task = asyncio.create_task(service._audio_pipeline._flush_segment())
         await asyncio.sleep(0)  # flushがロックを取得しHTTP応答待ちに入るまで進める
@@ -400,12 +401,12 @@ class TestIncrementalSegments:
 
         mock_stt.flush = AsyncMock(side_effect=flush)
 
-        coordinator._vad.last_speech_start_sample = 1000
+        cast("MagicMock", coordinator._vad).last_speech_start_sample = 1000
         coordinator._on_audio_chunk(b"chunk-a")
         first_flush = asyncio.create_task(coordinator._flush_segment())
         await asyncio.sleep(0)  # 1回目がロックを取得しHTTP応答待ちに入るまで進める
 
-        coordinator._vad.last_speech_start_sample = 5000
+        cast("MagicMock", coordinator._vad).last_speech_start_sample = 5000
         coordinator._on_audio_chunk(b"chunk-b")
         second_flush = asyncio.create_task(coordinator._flush_segment())
 

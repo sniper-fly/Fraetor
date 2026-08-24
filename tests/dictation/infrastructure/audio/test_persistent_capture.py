@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -85,7 +86,7 @@ class TestPersistentStreamCapture:
         close()/stop() を呼ばずに (デッドロック回避) 新しいストリームへ差し替える"""
         capture = PersistentStreamCapture(_SAMPLE_RATE)
         await capture.start_recording(MagicMock())
-        old_stream = capture._stream
+        old_stream = cast("MagicMock", capture._stream)
         old_stream.active = False
         mock_sd.InputStream.reset_mock()
         new_stream = MagicMock()
@@ -102,7 +103,7 @@ class TestPersistentStreamCapture:
         """active なストリームはそのまま使い続ける (再オープンしない)"""
         capture = PersistentStreamCapture(_SAMPLE_RATE)
         await capture.start_recording(MagicMock())
-        active_stream = capture._stream
+        active_stream = cast("MagicMock", capture._stream)
         active_stream.active = True
         mock_sd.InputStream.reset_mock()
 

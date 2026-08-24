@@ -11,13 +11,14 @@ if TYPE_CHECKING:
     from src.dictation.application.app_state import AppState
 
 
+_DEFAULT_FOCUSED_PANE = HerdrSessionInfo(pane_id="w1:p1", label="Claude Code")
+
+
 class FakeHerdrClient(HerdrClientPort):
     def __init__(
         self,
         *,
-        focused_pane: HerdrSessionInfo | None = HerdrSessionInfo(
-            pane_id="w1:p1", label="Claude Code"
-        ),
+        focused_pane: HerdrSessionInfo | None = _DEFAULT_FOCUSED_PANE,
         sessions: list[HerdrSessionInfo] | None = None,
         send_text_result: bool = True,
     ) -> None:
