@@ -28,11 +28,19 @@ async def toggle_recording_and_send_to_herdr(request: Request) -> dict[str, obje
         await recording_session_service.stop_session(herdr_send_confirmed=True)
         return {"recording": False}
 
-    target_pane_id = await herdr_client.get_focused_pane_id()
+    focused_pane = await herdr_client.get_focused_pane()
+    target_pane_id = focused_pane.pane_id if focused_pane else None
+    target_pane_label = focused_pane.label if focused_pane else None
     await recording_session_service.start_session(
-        target_pane_id=target_pane_id, herdr_requested=True
+        target_pane_id=target_pane_id,
+        target_pane_label=target_pane_label,
+        herdr_requested=True,
     )
-    return {"recording": True, "target_pane_id": target_pane_id}
+    return {
+        "recording": True,
+        "target_pane_id": target_pane_id,
+        "target_pane_label": target_pane_label,
+    }
 
 
 @router.get("/api/herdr-sessions")

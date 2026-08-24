@@ -49,7 +49,11 @@ class RecordingSessionService:
         self._timeout_monitor: SessionTimeoutMonitor | None = None
 
     async def start_session(
-        self, *, target_pane_id: str | None = None, herdr_requested: bool = False
+        self,
+        *,
+        target_pane_id: str | None = None,
+        target_pane_label: str | None = None,
+        herdr_requested: bool = False,
     ) -> None:
         """セッションを開始し、録音を開始する。"""
         async with self._lock:
@@ -95,6 +99,7 @@ class RecordingSessionService:
                     "recording": True,
                     "session_id": session.id,
                     "target_pane_id": target_pane_id,
+                    "target_pane_label": target_pane_label,
                     "herdr_requested": herdr_requested,
                 },
             )

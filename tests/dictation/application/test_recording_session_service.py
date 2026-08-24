@@ -137,11 +137,16 @@ class TestStartSession:
         service, app_state, _, queue, _repo = _make_service()
         sub = app_state.broadcaster.subscribe()
 
-        await service.start_session(target_pane_id="w1:p1", herdr_requested=True)
+        await service.start_session(
+            target_pane_id="w1:p1",
+            target_pane_label="Claude Code",
+            herdr_requested=True,
+        )
 
         msg = sub.get_nowait()
         data = json.loads(msg["data"])
         assert data["target_pane_id"] == "w1:p1"
+        assert data["target_pane_label"] == "Claude Code"
         assert data["herdr_requested"] is True
 
         await service.stop_session()
@@ -160,6 +165,7 @@ class TestStartSession:
         msg = sub.get_nowait()
         data = json.loads(msg["data"])
         assert data["target_pane_id"] is None
+        assert data["target_pane_label"] is None
         assert data["herdr_requested"] is False
 
         await service.stop_session()

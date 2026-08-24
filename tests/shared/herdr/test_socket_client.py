@@ -40,11 +40,11 @@ async def _serve_one_response(
     return await asyncio.start_unix_server(handle, path=str(socket_path))
 
 
-class TestGetFocusedPaneId:
-    async def test_parses_focused_pane_id_from_snapshot(
+class TestGetFocusedPane:
+    async def test_parses_focused_pane_from_snapshot(
         self, short_tmp_dir: Path
     ) -> None:
-        """実際のsession.snapshotレスポンスはfocused_pane_idを
+        """実際のsession.snapshotレスポンスはfocused_pane_id/panesを
         result.snapshot配下にネストする (result直下ではない)。"""
         socket_path = short_tmp_dir / "herdr.sock"
         server = await _serve_one_response(
@@ -52,22 +52,53 @@ class TestGetFocusedPaneId:
             {
                 "result": {
                     "type": "session_snapshot",
-                    "snapshot": {"focused_pane_id": "w1:p1"},
+                    "snapshot": {
+                        "focused_pane_id": "w1:p1",
+                        "panes": [
+                            {
+                                "pane_id": "w1:p1",
+                                "terminal_title_stripped": "Claude Code",
+                            },
+                            {"pane_id": "w1:p2", "terminal_title_stripped": "shell"},
+                        ],
+                    },
                 }
             },
         )
         client = HerdrSocketClient(socket_path=socket_path)
 
-        pane_id = await client.get_focused_pane_id()
+        pane = await client.get_focused_pane()
 
-        assert pane_id == "w1:p1"
+        assert pane is not None
+        assert (pane.pane_id, pane.label) == ("w1:p1", "Claude Code")
+        server.close()
+        await server.wait_closed()
+
+    async def test_returns_none_when_focused_pane_not_in_panes(
+        self, short_tmp_dir: Path
+    ) -> None:
+        socket_path = short_tmp_dir / "herdr.sock"
+        server = await _serve_one_response(
+            socket_path,
+            {
+                "result": {
+                    "snapshot": {
+                        "focused_pane_id": "w1:p1",
+                        "panes": [],
+                    }
+                }
+            },
+        )
+        client = HerdrSocketClient(socket_path=socket_path)
+
+        assert await client.get_focused_pane() is None
         server.close()
         await server.wait_closed()
 
     async def test_returns_none_when_socket_missing(self, tmp_path: Path) -> None:
         client = HerdrSocketClient(socket_path=tmp_path / "missing.sock")
 
-        assert await client.get_focused_pane_id() is None
+        assert await client.get_focused_pane() is None
 
 
 class TestListSessions:
@@ -78,8 +109,8 @@ class TestListSessions:
             {
                 "result": {
                     "panes": [
-                        {"pane_id": "w1:p1", "label": "claude-code"},
-                        {"pane_id": "w1:p2", "label": "shell"},
+                        {"pane_id": "w1:p1", "terminal_title_stripped": "claude-code"},
+                        {"pane_id": "w1:p2", "terminal_title_stripped": "shell"},
                     ]
                 }
             },
@@ -95,24 +126,19 @@ class TestListSessions:
         server.close()
         await server.wait_closed()
 
-    async def test_falls_back_to_terminal_title_when_label_is_null(
+    async def test_falls_back_to_terminal_title_when_stripped_is_missing(
         self, short_tmp_dir: Path
     ) -> None:
-        """実際のHerdrはlabelを持たないpaneが多く、その場合は
-        terminal_title_stripped (ターミナルタイトル) を代わりに使う。"""
+        """terminal_title_strippedが無い場合はterminal_titleへ、
+        それも無い場合はpane_idそのものへフォールバックする。"""
         socket_path = short_tmp_dir / "herdr.sock"
         server = await _serve_one_response(
             socket_path,
             {
                 "result": {
                     "panes": [
-                        {
-                            "pane_id": "w1:p1",
-                            "label": None,
-                            "title": None,
-                            "terminal_title_stripped": "Claude Code",
-                        },
-                        {"pane_id": "w1:p2", "label": None, "title": None},
+                        {"pane_id": "w1:p1", "terminal_title": "✳ Claude Code"},
+                        {"pane_id": "w1:p2"},
                     ]
                 }
             },
@@ -122,7 +148,7 @@ class TestListSessions:
         sessions = await client.list_sessions()
 
         assert [(s.pane_id, s.label) for s in sessions] == [
-            ("w1:p1", "Claude Code"),
+            ("w1:p1", "✳ Claude Code"),
             ("w1:p2", "w1:p2"),
         ]
         server.close()

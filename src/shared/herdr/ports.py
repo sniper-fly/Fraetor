@@ -12,8 +12,8 @@ class HerdrSessionInfo(BaseModel):
 
 class HerdrClientPort(ABC):
     @abstractmethod
-    async def get_focused_pane_id(self) -> str | None:
-        """今前面に出ているペインIDを取得する。
+    async def get_focused_pane(self) -> HerdrSessionInfo | None:
+        """今前面に出ているペインの情報 (ID・タイトル) を取得する。
 
         取得できない場合は None を返す (例外を投げない)。
         """

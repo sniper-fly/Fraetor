@@ -332,9 +332,12 @@ Singleton の `AudioPipelineCoordinator` には値ではなく
 
 ```
 [録音開始 (POST /api/toggle-recording-and-send-to-herdr の場合のみ)]
-  HerdrClientPort.get_focused_pane_id() で前面ペインを自動取得 (取得失敗時は
-  None のまま録音は開始する) -> RecordingSession.target_pane_id に記録
-    -> SSE("status", recording=true, session_id, target_pane_id, herdr_requested)
+  HerdrClientPort.get_focused_pane() で前面ペインの情報 (ID・タイトル) を
+  自動取得 (取得失敗時は None のまま録音は開始する)
+    -> RecordingSession.target_pane_id に記録 (タイトルはドメインには保持せず
+       SSE配信のみに使う)
+    -> SSE("status", recording=true, session_id, target_pane_id,
+       target_pane_label, herdr_requested)
 
 [レーン1: 録音中 (RecordingSessionService / AudioPipelineCoordinator)]
   マイク -> sounddevice(PCM, 常駐ストリーム) -> MAI Transcribe (バッファリング)
@@ -570,19 +573,22 @@ Herdrクライアント (Socket API通信 + CLI呼び出し) は、`dictation`/
 属さない外部システムへのクライアントであり、`DynamicSettings`と同じ理由で
 `shared/herdr/`に配置する (「アーキテクチャ層構成」章参照)。
 
-- `HerdrClientPort` (ABC): `get_focused_pane_id()` / `list_sessions()` /
+- `HerdrClientPort` (ABC): `get_focused_pane()` / `list_sessions()` /
   `send_text(pane_id, text)`。いずれも例外を投げず、取得・送信失敗時は
   `None`/`[]`/`False`を返す (呼び出し元に例外を伝播させない)
 - `HerdrSocketClient`: Unix domain socket経由のSocket API呼び出し
   (`session.snapshot`/`pane.list`) と、`herdr agent prompt`
   (Enter送信込み) のCLI呼び出しで実装する。ソケットパス不在・接続失敗・
-  タイムアウト・JSONパース失敗はすべて捕捉してログのみ出す
+  タイムアウト・JSONパース失敗はすべて捕捉してログのみ出す。両APIとも
+  ペインごとの`terminal_title_stripped`(無ければ`terminal_title`、それも
+  無ければ`pane_id`) を人間向けタイトル (`HerdrSessionInfo.label`) として
+  使う (Herdr側に専用の`label`/`title`フィールドは存在しない)
 
 ### エンドポイント
 
 | エンドポイント | 役割 |
 |---|---|
-| `POST /api/toggle-recording-and-send-to-herdr` | 既存の`/api/toggle-recording`とは独立した新規トグル。1回目呼び出しで`get_focused_pane_id()`の結果を`target_pane_id`として記録しつつ録音開始 (取得失敗時も`None`のまま録音は開始する)。2回目呼び出しで録音停止し、そのセッションを送信確定 (`herdr_send_confirmed=true`) としてマークする (即時送信はしない) |
+| `POST /api/toggle-recording-and-send-to-herdr` | 既存の`/api/toggle-recording`とは独立した新規トグル。1回目呼び出しで`get_focused_pane()`の結果を`target_pane_id`/`target_pane_label`として記録しつつ録音開始 (取得失敗時も両方`None`のまま録音は開始する)。2回目呼び出しで録音停止し、そのセッションを送信確定 (`herdr_send_confirmed=true`) としてマークする (即時送信はしない) |
 | `GET /api/herdr-sessions` | 送信先ドロップダウン表示用のセッション一覧 (`HerdrClientPort.list_sessions()`の結果) |
 | `POST /api/send-to-herdr` | 指定した`pane_id`へ`text`を送信する (手動送信ボタン・自動送信の両方から呼ばれる) |
 
@@ -590,7 +596,8 @@ Herdrクライアント (Socket API通信 + CLI呼び出し) は、`dictation`/
 既存の`/api/toggle-recording`と同じく外部のショートカットスクリプト
 (`toggle-recording-and-send-to-herdr.sh`) からcurlで叩かれる。フロントエンドは
 このレスポンスを受け取れないため、必要な情報はすべてSSEの`status`イベント
-(`target_pane_id`/`herdr_requested`/`herdr_send_confirmed`) 経由で受け取る。
+(`target_pane_id`/`target_pane_label`/`herdr_requested`/`herdr_send_confirmed`)
+経由で受け取る。
 
 ### 送信先の保持単位とタイミング
 

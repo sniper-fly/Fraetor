@@ -178,7 +178,8 @@ function escapeAttr(text) {
 
 // --- セッションごとの表示ブロック ---
 // 各要素: { id, text, ended, finalized, herdrRequested, herdrSendConfirmed,
-//           herdrAutoSendAttempted, targetPaneId, selectedPaneId, proofreadSucceeded }
+//           herdrAutoSendAttempted, targetPaneId, targetPaneLabel, selectedPaneId,
+//           proofreadSucceeded }
 // 直近 maxBlocks 件 (新しいものが上) をブロックとして同時表示する。
 // 完了順に1件ずつ校正→finalize-sessionを行い、finalized化されたブロックは
 // 手動送信ボタンが有効になる (Herdr確定済みなら自動送信も走る)。
@@ -198,6 +199,7 @@ function getOrCreateSession(id, opts = {}) {
       herdrSendConfirmed: false,
       herdrAutoSendAttempted: false,
       targetPaneId: opts.targetPaneId ?? null,
+      targetPaneLabel: opts.targetPaneLabel ?? null,
       selectedPaneId: null,
       proofreadSucceeded: true,
     };
@@ -214,7 +216,9 @@ function evictOldBlocks() {
 }
 
 function blockHtml(session) {
-  const paneLabel = session.targetPaneId ?? '未検出 (クリップボードのみ)';
+  const paneLabel = session.targetPaneId
+    ? `${session.targetPaneId} (${session.targetPaneLabel ?? session.targetPaneId})`
+    : '未検出 (クリップボードのみ)';
   return `
     <div data-session-id="${escapeAttr(session.id)}" id="block-${session.id}" class="bg-gray-800 rounded">
       <textarea id="block-textarea-${session.id}"
@@ -452,6 +456,7 @@ function connectSSE() {
     if (data.recording) {
       getOrCreateSession(data.session_id, {
         targetPaneId: data.target_pane_id,
+        targetPaneLabel: data.target_pane_label,
         herdrRequested: data.herdr_requested,
       });
     } else if (data.herdr_send_confirmed) {

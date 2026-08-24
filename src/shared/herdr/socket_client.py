@@ -25,6 +25,12 @@ def _resolve_socket_path() -> Path:
     return Path.home() / ".config" / "herdr" / "herdr.sock"
 
 
+def _pane_to_session_info(pane: dict[str, Any]) -> HerdrSessionInfo:
+    pane_id = pane["pane_id"]
+    label = pane.get("terminal_title_stripped") or pane.get("terminal_title") or pane_id
+    return HerdrSessionInfo(pane_id=pane_id, label=label)
+
+
 class HerdrSocketClient(HerdrClientPort):
     def __init__(self, socket_path: Path | None = None) -> None:
         self._socket_path = (
@@ -64,15 +70,21 @@ class HerdrSocketClient(HerdrClientPort):
             return None
         return response.get("result")
 
-    async def get_focused_pane_id(self) -> str | None:
+    async def get_focused_pane(self) -> HerdrSessionInfo | None:
         result = await self._call("session.snapshot")
         if not result:
             return None
         snapshot = result.get("snapshot")
         if not isinstance(snapshot, dict):
             return None
-        pane_id = snapshot.get("focused_pane_id")
-        return pane_id if isinstance(pane_id, str) else None
+        focused_pane_id = snapshot.get("focused_pane_id")
+        panes = snapshot.get("panes")
+        if not isinstance(focused_pane_id, str) or not isinstance(panes, list):
+            return None
+        for pane in panes:
+            if pane.get("pane_id") == focused_pane_id:
+                return _pane_to_session_info(pane)
+        return None
 
     async def list_sessions(self) -> list[HerdrSessionInfo]:
         result = await self._call("pane.list")
@@ -83,16 +95,9 @@ class HerdrSocketClient(HerdrClientPort):
             return []
         sessions = []
         for pane in panes:
-            pane_id = pane.get("pane_id")
-            if not pane_id:
+            if not pane.get("pane_id"):
                 continue
-            label = (
-                pane.get("label")
-                or pane.get("terminal_title_stripped")
-                or pane.get("title")
-                or pane_id
-            )
-            sessions.append(HerdrSessionInfo(pane_id=pane_id, label=label))
+            sessions.append(_pane_to_session_info(pane))
         return sessions
 
     async def send_text(self, pane_id: str, text: str) -> bool:
