@@ -10,3 +10,8 @@ class ProofreadRequest(BaseModel):
 class FinalizeSessionRequest(BaseModel):
     session_id: str
     text: str
+
+
+class SendToHerdrRequest(BaseModel):
+    pane_id: str
+    text: str

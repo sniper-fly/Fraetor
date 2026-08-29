@@ -1,9 +1,24 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from botocore.endpoint import Endpoint
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def _isolate_app_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`history_dir` を tmp_path に隔離する。
+
+    `Settings.history_dir` は履歴 (`history.jsonl`) と動的設定
+    (`settings.jsonc`) の置き場所を兼ねる。`Container` を構築するテストは
+    `JsoncSettingsRepository` 経由で実ファイルを書くため、隔離しないと
+    利用者の `~/.voice-input/` を書き換えてしまう。
+    """
+    monkeypatch.setenv("FRAETOR_HISTORY_DIR", str(tmp_path / "app-data"))
 
 
 @pytest.fixture(autouse=True)

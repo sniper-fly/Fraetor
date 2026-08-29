@@ -16,6 +16,8 @@
         class="px-4 py-2 rounded bg-blue-600 text-white font-medium">メイン</button>
       <button id="tab-history" onclick="switchTab('history')"
         class="px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium">履歴</button>
+      <button id="tab-settings" onclick="switchTab('settings')"
+        class="px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium">設定</button>
     </div>
 
     <!-- ステータスバー -->
@@ -31,6 +33,11 @@
           <button id="proofread-toggle" onclick="toggleProofread()"
             class="px-2 py-0.5 rounded text-xs font-medium bg-green-600 text-white">ON</button>
         </div>
+        <div class="flex items-center gap-2">
+          <span class="text-sm">意図翻訳:</span>
+          <button id="intent-translation-toggle" onclick="toggleIntentTranslation()"
+            class="px-2 py-0.5 rounded text-xs font-medium bg-gray-600 text-gray-300">OFF</button>
+        </div>
       </div>
       <div class="flex items-center gap-6">
         <button id="btn-copy-main" onclick="copyMainText()"
@@ -42,15 +49,10 @@
       </div>
     </div>
 
-    <!-- メインタブ: セッション表示 -->
+    <!-- メインタブ: セッション表示 (直近 maxBlocks 件を新しいものから順に表示) -->
     <div id="panel-main">
-      <div id="editor-mode">
-        <textarea id="editor-textarea"
-          class="w-full bg-gray-800 text-gray-100 font-mono text-sm p-3 rounded-t border border-gray-700 focus:outline-none focus:border-blue-500 resize-y"
-          rows="8" placeholder="待機中..."></textarea>
-        <div id="editor-interim"
-          class="bg-gray-800 border border-t-0 border-gray-700 rounded-b p-3 min-h-[2rem] font-mono text-sm text-gray-400">
-        </div>
+      <div id="blocks-container" class="space-y-3">
+        <p class="text-gray-500">待機中...</p>
       </div>
     </div>
 
@@ -60,32 +62,39 @@
         <p class="text-gray-500">読み込み中...</p>
       </div>
     </div>
+
+    <!-- 設定タブ -->
+    <div id="panel-settings" class="hidden">
+      <!-- 入力欄は SETTINGS_FIELDS からJSで生成する (項目定義の二重管理を避ける) -->
+      <div id="settings-form" class="space-y-3">
+        <p class="text-gray-500">読み込み中...</p>
+      </div>
+      <div class="flex items-center gap-3 mt-4">
+        <button id="btn-save-settings" onclick="saveSettings()"
+          class="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors">保存</button>
+        <p id="settings-status" class="text-sm"></p>
+      </div>
+    </div>
   </div>
 
   <div id="copy-toast"
     class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded bg-gray-700 text-white text-sm shadow-lg opacity-0 pointer-events-none transition-opacity duration-200">
-    コピーしました
   </div>
 
 <script>
-function switchTab(tab) {
-  const mainBtn = document.getElementById('tab-main');
-  const histBtn = document.getElementById('tab-history');
-  const mainPanel = document.getElementById('panel-main');
-  const histPanel = document.getElementById('panel-history');
+// タブ名 -> 表示時に走らせる読み込み処理 (なければ null)。
+// タブが増えても if/else の分岐を足さずに済むよう、一覧で持つ。
+const TABS = { main: null, history: () => loadHistory(), settings: () => loadSettings() };
 
-  if (tab === 'main') {
-    mainBtn.className = 'px-4 py-2 rounded bg-blue-600 text-white font-medium';
-    histBtn.className = 'px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium';
-    mainPanel.classList.remove('hidden');
-    histPanel.classList.add('hidden');
-  } else {
-    histBtn.className = 'px-4 py-2 rounded bg-blue-600 text-white font-medium';
-    mainBtn.className = 'px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium';
-    histPanel.classList.remove('hidden');
-    mainPanel.classList.add('hidden');
-    loadHistory();
+function switchTab(tab) {
+  const activeClass = 'px-4 py-2 rounded bg-blue-600 text-white font-medium';
+  const inactiveClass = 'px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium';
+  for (const name of Object.keys(TABS)) {
+    const isActive = name === tab;
+    document.getElementById(`tab-${name}`).className = isActive ? activeClass : inactiveClass;
+    document.getElementById(`panel-${name}`).classList.toggle('hidden', !isActive);
   }
+  TABS[tab]?.();
 }
 
 function updateRecordingUI(recording) {
@@ -109,8 +118,10 @@ function updateRecordingUI(recording) {
 
 let copyToastTimeoutId = null;
 
-function showCopyToast() {
+function showToast(message, isError = false) {
   const toast = document.getElementById('copy-toast');
+  toast.textContent = message;
+  toast.classList.toggle('text-red-300', isError);
   toast.classList.remove('opacity-0');
   clearTimeout(copyToastTimeoutId);
   copyToastTimeoutId = setTimeout(() => {
@@ -118,18 +129,20 @@ function showCopyToast() {
   }, 1500);
 }
 
-async function copyToClipboard(text) {
+async function copyToClipboard(text, message = 'コピーしました') {
   try {
     await navigator.clipboard.writeText(text);
-    showCopyToast();
+    showToast(message);
   } catch {
     // クリップボードアクセス不可時は何もしない
   }
 }
 
 function copyMainText() {
-  const text = document.getElementById('editor-textarea').value;
-  copyToClipboard(text);
+  if (sessionQueue.length === 0) return;
+  const latest = sessionQueue[sessionQueue.length - 1];
+  const textarea = document.getElementById(`block-textarea-${latest.id}`);
+  copyToClipboard(textarea ? textarea.value : latest.text);
 }
 
 async function shutdownServer() {
@@ -163,8 +176,117 @@ function escapeAttr(text) {
     .replace(/>/g, '&gt;');
 }
 
-function appendToTextarea(text) {
-  const textarea = document.getElementById('editor-textarea');
+// --- セッションごとの表示ブロック ---
+// 各要素: { id, text, ended, finalized, herdrRequested, herdrSendConfirmed,
+//           herdrAutoSendAttempted, targetPaneId, targetPaneLabel, selectedPaneId,
+//           proofreadSucceeded }
+// 直近 maxBlocks 件 (新しいものが上) をブロックとして同時表示する。
+// 完了順に1件ずつ校正→finalize-sessionを行い、finalized化されたブロックは
+// 手動送信ボタンが有効になる (Herdr確定済みなら自動送信も走る)。
+let sessionQueue = [];
+let finalizing = false;
+let maxBlocks = 4; // 起動時に /api/settings の herdr_slot_count で上書きする
+
+function getOrCreateSession(id, opts = {}) {
+  let session = sessionQueue.find(s => s.id === id);
+  if (!session) {
+    session = {
+      id,
+      text: '',
+      ended: false,
+      finalized: false,
+      herdrRequested: opts.herdrRequested ?? false,
+      herdrSendConfirmed: false,
+      herdrAutoSendAttempted: false,
+      targetPaneId: opts.targetPaneId ?? null,
+      targetPaneLabel: opts.targetPaneLabel ?? null,
+      selectedPaneId: null,
+      proofreadSucceeded: true,
+    };
+    sessionQueue.push(session);
+    syncBlocks();
+  }
+  return session;
+}
+
+function evictOldBlocks() {
+  while (sessionQueue.length > maxBlocks && sessionQueue[0].finalized) {
+    sessionQueue.shift();
+  }
+}
+
+function blockHtml(session) {
+  const paneLabel = session.targetPaneId
+    ? `${session.targetPaneId} (${session.targetPaneLabel ?? session.targetPaneId})`
+    : '未検出 (クリップボードのみ)';
+  return `
+    <div data-session-id="${escapeAttr(session.id)}" id="block-${session.id}" class="bg-gray-800 rounded">
+      <textarea id="block-textarea-${session.id}"
+        class="w-full bg-gray-800 text-gray-100 font-mono text-sm p-3 rounded-t border border-gray-700 focus:outline-none focus:border-blue-500 resize-y"
+        rows="4" placeholder="待機中...">${escapeHtml(session.text)}</textarea>
+      <div id="block-interim-${session.id}"
+        class="border border-t-0 border-gray-700 p-3 min-h-[2rem] font-mono text-sm text-gray-400"></div>
+      <div class="flex items-center justify-between gap-2 border border-t-0 border-gray-700 rounded-b p-2">
+        <select id="block-select-${session.id}" onfocus="loadHerdrOptions('${session.id}')"
+          onchange="onBlockSelectChange('${session.id}')"
+          class="flex-1 min-w-0 bg-gray-900 text-gray-100 text-xs px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500">
+          <option value="${escapeAttr(session.targetPaneId ?? '')}">${escapeHtml(paneLabel)}</option>
+        </select>
+        <button id="block-send-${session.id}" onclick="manualSendBlock('${session.id}')"
+          class="px-3 py-1 rounded text-xs font-medium shrink-0">送信</button>
+      </div>
+    </div>`;
+}
+
+function updateBlockSendButton(session) {
+  const btn = document.getElementById(`block-send-${session.id}`);
+  if (!btn) return;
+  btn.disabled = !session.finalized;
+  btn.className = session.finalized
+    ? 'px-3 py-1 rounded text-xs font-medium shrink-0 bg-blue-600 hover:bg-blue-700 text-white'
+    : 'px-3 py-1 rounded text-xs font-medium shrink-0 bg-gray-700 text-gray-500 cursor-not-allowed';
+}
+
+// 既存ブロックの textarea/interim の内容は書き換えない (校正待ち中に
+// ユーザーが別ブロックを編集していても失わないようにするため)。
+// 行うのは表示対象ブロックの追加・退避ブロックの削除・並び順の維持・
+// 送信ボタンの有効化状態の更新のみ。
+function renderBlocks() {
+  const container = document.getElementById('blocks-container');
+  const visible = [...sessionQueue].slice(-maxBlocks).reverse(); // 新しいものが上
+  const visibleIds = new Set(visible.map(s => s.id));
+
+  for (const el of [...container.children]) {
+    if (!visibleIds.has(el.dataset.sessionId)) el.remove();
+  }
+
+  let previousEl = null;
+  for (const session of visible) {
+    let el = document.getElementById(`block-${session.id}`);
+    if (!el) {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = blockHtml(session);
+      el = wrapper.firstElementChild;
+    }
+    const expectedNext = previousEl ? previousEl.nextSibling : container.firstChild;
+    if (expectedNext !== el) container.insertBefore(el, expectedNext);
+    updateBlockSendButton(session);
+    previousEl = el;
+  }
+
+  if (container.children.length === 0) {
+    container.innerHTML = '<p class="text-gray-500">待機中...</p>';
+  }
+}
+
+function syncBlocks() {
+  evictOldBlocks();
+  renderBlocks();
+}
+
+function appendToBlockTextarea(sessionId, text) {
+  const textarea = document.getElementById(`block-textarea-${sessionId}`);
+  if (!textarea) return;
   const startPos = textarea.selectionStart;
   const endPos = textarea.selectionEnd;
   const currentLen = textarea.value.length;
@@ -179,61 +301,20 @@ function appendToTextarea(text) {
   }
 }
 
-function updateEditorInterim(text) {
-  const interim = document.getElementById('editor-interim');
-  if (text) {
-    interim.innerHTML = `${escapeHtml(text)} <span class="text-xs">[認識中]</span>`;
-  } else {
-    interim.innerHTML = '';
-  }
-}
-
-// --- セッションごとの表示キュー ---
-// 各要素: { id: string, text: string, ended: boolean, needsClear: boolean }
-// 先頭 (sessionQueue[0]) のセッションのみtextarea/interimに表示し、
-// 完了順に1件ずつ自動確定 (校正→finalize-session) する。
-// これにより異なるセッションの文字起こし結果がtextarea上で混在しない。
-// textareaは「次の録音が始まった瞬間」にはクリアしない (録音ボタンを押した
-// だけではまだ何も確定していないため)。表示中セッションが切り替わった後、
-// そのセッションで最初にrecognized (文言確定) を受け取った時点でtextareaを
-// クリアして確定テキストを反映する。それまでは前セッションの確定済みテキス
-// トを表示し続ける。
-let sessionQueue = [];
-let finalizing = false;
-let displayedSessionId = null;
-
-function getOrCreateSession(id) {
-  let session = sessionQueue.find(s => s.id === id);
-  if (!session) {
-    session = { id, text: '', ended: false, needsClear: true };
-    sessionQueue.push(session);
-  }
-  return session;
-}
-
-function ensureDisplaying(session) {
-  if (displayedSessionId === session.id) return;
-  displayedSessionId = session.id;
-  updateEditorInterim('');
+function updateBlockInterim(sessionId, text) {
+  const interim = document.getElementById(`block-interim-${sessionId}`);
+  if (!interim) return;
+  interim.innerHTML = text ? `${escapeHtml(text)} <span class="text-xs">[認識中]</span>` : '';
 }
 
 async function tryAdvanceQueue() {
-  if (finalizing || sessionQueue.length === 0) return;
-  const front = sessionQueue[0];
-  ensureDisplaying(front);
-
-  if (!front.ended) return;
+  if (finalizing) return;
+  const front = sessionQueue.find(s => !s.finalized);
+  if (!front || !front.ended) return;
 
   finalizing = true;
-  const textarea = document.getElementById('editor-textarea');
-  // 表示中にrecognizedが一度も来なかった (無音セッション、または前セッション
-  // の残存表示のまま終了した) 場合、確定前にfront.textへ強制同期する。
-  if (front.needsClear) {
-    textarea.value = front.text;
-    front.needsClear = false;
-  }
   if (isProofreadEnabled() && front.text.trim()) {
-    updateEditorInterim('校正中...');
+    updateBlockInterim(front.id, '校正中...');
     try {
       const res = await fetch('/api/proofread', {
         method: 'POST',
@@ -241,23 +322,106 @@ async function tryAdvanceQueue() {
         body: JSON.stringify({ text: front.text }),
       });
       const data = await res.json();
-      textarea.value = data.text;
+      const textarea = document.getElementById(`block-textarea-${front.id}`);
+      if (textarea) textarea.value = data.text;
       front.text = data.text;
+      front.proofreadSucceeded = data.proofread;
     } catch {
       // 校正失敗時は元テキストのまま
+      front.proofreadSucceeded = false;
     }
-    updateEditorInterim('');
+    updateBlockInterim(front.id, '');
   }
+
+  const textarea = document.getElementById(`block-textarea-${front.id}`);
+  if (textarea) front.text = textarea.value;
 
   await fetch('/api/finalize-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: front.id, text: textarea.value }),
+    body: JSON.stringify({ session_id: front.id, text: front.text }),
   });
 
-  sessionQueue.shift();
+  front.finalized = true;
+  if (front.herdrRequested) await maybeAutoSendToHerdr(front);
+
+  syncBlocks();
   finalizing = false;
   tryAdvanceQueue(); // 次のセッションが既にended済みなら連続処理
+}
+
+// --- Herdr送信 ---
+async function loadHerdrOptions(sessionId) {
+  const select = document.getElementById(`block-select-${sessionId}`);
+  const session = sessionQueue.find(s => s.id === sessionId);
+  if (!select || !session) return;
+  try {
+    const res = await fetch('/api/herdr-sessions');
+    const sessions = await res.json();
+    const current = session.selectedPaneId ?? session.targetPaneId ?? '';
+    const options = sessions.map(s =>
+      `<option value="${escapeAttr(s.pane_id)}"${s.pane_id === current ? ' selected' : ''}>${escapeHtml(s.pane_id)} (${escapeHtml(s.label)})</option>`
+    ).join('');
+    select.innerHTML = options
+      + `<option value=""${current === '' ? ' selected' : ''}>未検出 (クリップボードのみ)</option>`;
+  } catch {
+    // 取得失敗時は既存の選択肢のまま
+  }
+}
+
+function onBlockSelectChange(sessionId) {
+  const select = document.getElementById(`block-select-${sessionId}`);
+  const session = sessionQueue.find(s => s.id === sessionId);
+  if (!select || !session) return;
+  session.selectedPaneId = select.value || null;
+}
+
+async function sendToHerdrOrFallback(paneId, text) {
+  if (!paneId) {
+    await copyToClipboard(text, 'Herdr未検出のためクリップボードにコピーしました');
+    return;
+  }
+  try {
+    const res = await fetch('/api/send-to-herdr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pane_id: paneId, text }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error('send failed');
+  } catch {
+    await copyToClipboard(text, 'Herdr送信に失敗しました。クリップボードにコピーしました');
+  }
+}
+
+async function maybeAutoSendToHerdr(session) {
+  if (!session.herdrRequested || !session.herdrSendConfirmed || !session.finalized) return;
+  if (session.herdrAutoSendAttempted) return;
+  session.herdrAutoSendAttempted = true;
+  if (!session.proofreadSucceeded) {
+    await copyToClipboard(session.text, '校正がタイムアウトしたため送信を中止し、クリップボードにコピーしました');
+    return;
+  }
+  await sendToHerdrOrFallback(session.targetPaneId, session.text);
+}
+
+async function manualSendBlock(sessionId) {
+  const session = sessionQueue.find(s => s.id === sessionId);
+  if (!session) return;
+  await sendToHerdrOrFallback(session.selectedPaneId ?? session.targetPaneId, session.text);
+}
+
+async function initMaxBlocks() {
+  try {
+    const res = await fetch('/api/settings');
+    const settings = await res.json();
+    if (typeof settings.herdr_slot_count === 'number' && settings.herdr_slot_count > 0) {
+      maxBlocks = settings.herdr_slot_count;
+    }
+    updateIntentTranslationUI(settings.intent_translation_enabled ?? false);
+  } catch {
+    // 取得失敗時は既定値のまま
+  }
 }
 
 function connectSSE() {
@@ -265,49 +429,42 @@ function connectSSE() {
 
   evtSource.addEventListener('interim', (e) => {
     const data = JSON.parse(e.data);
-    if (sessionQueue.length > 0 && sessionQueue[0].id === data.session_id) {
-      updateEditorInterim(data.text);
-    }
+    updateBlockInterim(data.session_id, data.text);
   });
 
   evtSource.addEventListener('recognized', (e) => {
     const data = JSON.parse(e.data);
     const session = getOrCreateSession(data.session_id);
     session.text += data.text;
-    if (sessionQueue[0].id === session.id) {
-      if (session.needsClear) {
-        // 表示切り替え後、初回のrecognizedで一括反映する。
-        // 前セッション確定処理中に既に蓄積されていた分も含めsession.text全体を書き込む
-        // (data.textだけをappendすると蓄積済み分が欠落する)。
-        document.getElementById('editor-textarea').value = session.text;
-        session.needsClear = false;
-      } else {
-        appendToTextarea(data.text);
-      }
-      updateEditorInterim('');
-    }
+    appendToBlockTextarea(data.session_id, data.text);
+    updateBlockInterim(data.session_id, '');
   });
 
   evtSource.addEventListener('processing', (e) => {
     const data = JSON.parse(e.data);
-    if (sessionQueue.length > 0 && sessionQueue[0].id === data.session_id) {
-      updateEditorInterim(data.message || '文字起こし中...');
-    }
+    updateBlockInterim(data.session_id, data.message || '文字起こし中...');
   });
 
   evtSource.addEventListener('processing_done', (e) => {
     const data = JSON.parse(e.data);
-    if (sessionQueue.length > 0 && sessionQueue[0].id === data.session_id) {
-      updateEditorInterim('');
-    }
+    updateBlockInterim(data.session_id, '');
   });
 
   evtSource.addEventListener('status', (e) => {
     const data = JSON.parse(e.data);
     updateRecordingUI(data.recording);
     if (data.recording) {
-      getOrCreateSession(data.session_id);
-      tryAdvanceQueue(); // 新セッションがキュー先頭なら、直ちに表示を切り替える
+      getOrCreateSession(data.session_id, {
+        targetPaneId: data.target_pane_id,
+        targetPaneLabel: data.target_pane_label,
+        herdrRequested: data.herdr_requested,
+      });
+    } else if (data.herdr_send_confirmed) {
+      const session = sessionQueue.find(s => s.id === data.session_id);
+      if (session) {
+        session.herdrSendConfirmed = true;
+        maybeAutoSendToHerdr(session);
+      }
     }
   });
 
@@ -320,7 +477,7 @@ function connectSSE() {
 
   evtSource.addEventListener('error', (e) => {
     const data = JSON.parse(e.data);
-    const container = document.getElementById('editor-mode');
+    const container = document.getElementById('blocks-container');
     const errorDiv = document.createElement('p');
     errorDiv.className = 'text-red-400 text-sm';
     errorDiv.textContent = data.message;
@@ -386,6 +543,107 @@ async function deleteHistory(event, sessionId) {
   }
 }
 
+// --- 設定タブ ---
+// key は DynamicSettings のフィールド名と一致させる。
+// step があれば type="number" (小数は step で刻みを指定)、なければ type="text"。
+const SETTINGS_FIELDS = [
+  { key: 'max_session_duration_sec', label: '最大セッション時間', unit: '秒', step: '1' },
+  { key: 'silence_timeout_sec', label: '無音セッション終了', unit: '秒', step: '1' },
+  { key: 'segment_silence_sec', label: '無音区切り (逐次文字起こし)', unit: '秒', step: '0.5' },
+  { key: 'vad_threshold', label: '発話判定の閾値', unit: '0〜1', step: '0.05' },
+  { key: 'mai_locale', label: '認識ロケール', unit: '' },
+  { key: 'mai_model_name', label: '認識モデル', unit: '' },
+  { key: 'mai_timeout_sec', label: '認識タイムアウト', unit: '秒', step: '1' },
+  { key: 'proofread_timeout_sec', label: '校正タイムアウト', unit: '秒', step: '1' },
+  { key: 'shutdown_delay_sec', label: '終了までの遅延', unit: '秒', step: '0.1' },
+  { key: 'sse_keepalive_sec', label: 'SSEキープアライブ間隔', unit: '秒', step: '1' },
+  { key: 'herdr_slot_count', label: 'Herdr表示ブロック数', unit: '件', step: '1' },
+  { key: 'screenshot_monitor_index', label: '意図翻訳: 撮影対象モニタ番号', unit: '', step: '1' },
+  { key: 'intent_translation_timeout_sec', label: '意図翻訳タイムアウト', unit: '秒', step: '1' },
+];
+
+// GET のレスポンス全体。PUT は全項目差し替えなので、フォームに出していない
+// 項目 (将来サーバー側だけに追加されたもの) を暗黙にリセットしないよう、
+// 元の値を保持してフォーム入力だけを上書きして送る。
+let loadedSettings = null;
+
+function setSettingsStatus(message, isError) {
+  const status = document.getElementById('settings-status');
+  status.textContent = message;
+  status.className = `text-sm ${isError ? 'text-red-400' : 'text-green-400'}`;
+}
+
+async function loadSettings() {
+  const container = document.getElementById('settings-form');
+  setSettingsStatus('', false);
+  try {
+    const res = await fetch('/api/settings');
+    loadedSettings = await res.json();
+  } catch {
+    container.innerHTML = '<p class="text-gray-500">設定の読み込みに失敗しました</p>';
+    return;
+  }
+  container.innerHTML = SETTINGS_FIELDS.map(f => `
+    <div class="flex items-center justify-between bg-gray-800 rounded p-3">
+      <label for="setting-${f.key}" class="text-sm">${escapeHtml(f.label)}</label>
+      <div class="flex items-center gap-2">
+        <input id="setting-${f.key}" data-key="${f.key}"
+          type="${f.step ? 'number' : 'text'}"${f.step ? ` step="${f.step}"` : ''}
+          value="${escapeAttr(loadedSettings[f.key])}"
+          class="w-40 bg-gray-900 text-gray-100 text-sm px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500">
+        <span class="text-xs text-gray-400 w-10">${escapeHtml(f.unit)}</span>
+      </div>
+    </div>`).join('');
+}
+
+function collectSettings() {
+  const body = { ...loadedSettings };
+  for (const field of SETTINGS_FIELDS) {
+    const value = document.getElementById(`setting-${field.key}`).value;
+    body[field.key] = field.step ? Number(value) : value;
+  }
+  return body;
+}
+
+function formatSettingsError(detail) {
+  if (!Array.isArray(detail)) return '保存に失敗しました';
+  // FastAPI の 422 は [{loc: [...], msg: "..."}] 形式。loc の末尾が
+  // フィールド名だが、model_validator 違反ではボディ全体を指すため
+  // 末尾が 'body' になる。その場合はメッセージのみ表示する。
+  return detail.map(e => {
+    const field = e.loc?.[e.loc.length - 1];
+    return field && field !== 'body' ? `${field}: ${e.msg}` : e.msg;
+  }).join(' / ');
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('btn-save-settings');
+  btn.disabled = true;
+  setSettingsStatus('保存中...', false);
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectSettings()),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      loadedSettings = data;
+      if (typeof data.herdr_slot_count === 'number' && data.herdr_slot_count > 0) {
+        maxBlocks = data.herdr_slot_count;
+        syncBlocks();
+      }
+      setSettingsStatus('保存しました (次回の録音・校正から反映されます)', false);
+    } else {
+      setSettingsStatus(formatSettingsError(data.detail), true);
+    }
+  } catch {
+    setSettingsStatus('保存に失敗しました', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // --- 校正トグル ---
 function isProofreadEnabled() {
   return localStorage.getItem('proofreadEnabled') !== 'false';
@@ -408,8 +666,47 @@ function updateProofreadUI(enabled) {
   }
 }
 
+// --- 意図翻訳トグル ---
+// 校正トグルとは異なり localStorage を持たず、`DynamicSettings.intent_translation_enabled`
+// (サーバー側) を真実源とする (撮影の有無をサーバー側で判断する必要があるため)。
+function updateIntentTranslationUI(enabled) {
+  const btn = document.getElementById('intent-translation-toggle');
+  if (enabled) {
+    btn.textContent = 'ON';
+    btn.className = 'px-2 py-0.5 rounded text-xs font-medium bg-green-600 text-white';
+  } else {
+    btn.textContent = 'OFF';
+    btn.className = 'px-2 py-0.5 rounded text-xs font-medium bg-gray-600 text-gray-300';
+  }
+}
+
+async function toggleIntentTranslation() {
+  const btn = document.getElementById('intent-translation-toggle');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/settings');
+    const settings = await res.json();
+    settings.intent_translation_enabled = !settings.intent_translation_enabled;
+    const putRes = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (putRes.ok) {
+      const data = await putRes.json();
+      updateIntentTranslationUI(data.intent_translation_enabled);
+      if (loadedSettings) loadedSettings.intent_translation_enabled = data.intent_translation_enabled;
+    }
+  } catch {
+    // 取得/更新失敗時は表示を変えない
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // 初期化
 updateProofreadUI(isProofreadEnabled());
+initMaxBlocks();
 connectSSE();
 </script>
 </body>

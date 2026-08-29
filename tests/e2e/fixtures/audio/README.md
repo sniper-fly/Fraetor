@@ -4,11 +4,24 @@
 
 ## 録音方法
 
-`arecord` で 16kHz/16bit/mono の WAV を直接録音できる。
+Linux では `arecord` で 16kHz/16bit/mono の WAV を直接録音できる。
 
 ```bash
 arecord -f S16_LE -r 16000 -c 1 -d <秒数> tests/e2e/fixtures/audio/<ファイル名>.wav
 ```
+
+macOS では `arecord` (ALSA) が無いため `ffmpeg` の avfoundation 入力を使う。
+`ffmpeg -f avfoundation -list_devices true -i ""` でマイクのデバイス番号を
+確認してから録音する。
+
+```bash
+ffmpeg -y -f avfoundation -i ":<デバイス番号>" -ar 16000 -ac 1 -sample_fmt s16 \
+  -t <秒数> tests/e2e/fixtures/audio/<ファイル名>.wav
+```
+
+録音後、プロジェクトの `SileroSpeechActivityDetector` に直接通して発話区間の
+検出位置・末尾の無音余白を確認すると、話し終わりが録れているか目視より確実に
+判定できる (詳細は `AudioPipelineCoordinator` のテスト・実装コード参照)。
 
 ## 必要なファイル
 
@@ -19,6 +32,7 @@ arecord -f S16_LE -r 16000 -c 1 -d <秒数> tests/e2e/fixtures/audio/<ファイ�
 | `03_silence_only.wav` | 12秒 | 何も話さず、部屋の環境音だけで録音する |
 | `04_short_utterance.wav` | 7秒 | 「はい」または「テスト」など一言だけ話し、その後は黙って待つ |
 | `05_toggle_recording.wav` | 4秒 | 「これはトグル動作の確認です。」と話す(末尾の無音は不要) |
+| `06_long_speech.wav` | 30秒 | 「今日の定例会議について報告します。」→1秒程度の間→「まず進捗ですが、予定していたタスクはほぼ完了しています。」→1秒程度の間→「次に課題ですが、外部APIとの連携部分で仕様の確認が必要です。」→1秒程度の間→「最後に来週のスケジュールですが、月曜に詳細を詰める予定です。」→1秒程度の間→「以上、よろしくお願いします。」と話した後、10秒以上黙って待つ |
 
 ## 用途
 
@@ -27,6 +41,9 @@ arecord -f S16_LE -r 16000 -c 1 -d <秒数> tests/e2e/fixtures/audio/<ファイ�
 - `03`: VADが誤って発話と判定しないこと(異常系/誤検知なし確認)
 - `04`: 極短い発話でもVAD/STTが機能すること(正常系)
 - `05`: ブラウザE2Eでの録音→トグル停止操作の確認用
+- `06`: 無音区切りごとの逐次flushで、文と文の間の短いポーズを挟んでも
+  全文が失われず届くこと(長い文章で最後の数言しか文字起こしされない、
+  という既知バグの回帰確認用)
 
 ## 声に関する注意
 

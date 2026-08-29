@@ -22,7 +22,7 @@ class TestSseKeepalive:
         """異常系: keepalive間隔を短縮した状態でも接続が正しく維持される"""
         base_url = fraetor_audio_server_handle.start(
             "05_toggle_recording.wav",
-            extra_env={"FRAETOR_SSE_KEEPALIVE_SEC": "1"},
+            settings_overrides={"sse_keepalive_sec": 1},
         )
 
         async with (

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from src.dictation.application.recording_session_service import (
         RecordingSessionService,
     )
+    from src.shared.config.ports import SettingsRepositoryPort
 
 router = APIRouter()
 
@@ -20,7 +21,10 @@ router = APIRouter()
 @router.get("/events")
 async def events(request: Request) -> EventSourceResponse:
     app_state: AppState = request.app.state.app_state
-    sse_keepalive_sec: float = request.app.state.sse_keepalive_sec
+    settings_repository: SettingsRepositoryPort = request.app.state.settings_repository
+    # キープアライブ間隔は接続時に1回読む。長時間つながり続ける SSE の
+    # 途中で間隔を変えても既存接続には反映しない (再接続で反映される)。
+    sse_keepalive_sec: float = settings_repository.get().sse_keepalive_sec
 
     async def event_generator() -> AsyncGenerator[dict[str, str]]:
         queue = app_state.broadcaster.subscribe()

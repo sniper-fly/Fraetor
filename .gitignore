@@ -6,6 +6,9 @@ azure_stt_key
 .env.*
 !.env.example
 
+# ローカル環境固有の指示 (AWSプロファイル名など環境識別子を含む)
+CLAUDE.local.md
+
 # Python
 __pycache__/
 *.py[cod]

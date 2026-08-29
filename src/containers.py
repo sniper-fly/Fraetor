@@ -19,15 +19,30 @@ from src.dictation.application.transcription_queue import TranscriptionQueue
 from src.dictation.infrastructure.audio.factory import create_audio_capture
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 from src.dictation.infrastructure.stt.factory import create_stt_engine
-from src.dictation.infrastructure.vad.silero_vad_detector import (
-    SileroSpeechActivityDetector,
+from src.dictation.infrastructure.vad.factory import create_vad
+from src.intent_translation.application.dictation_hook_adapter import (
+    IntentTranslationDictationAdapter,
+)
+from src.intent_translation.application.intent_translation_use_case import (
+    IntentTranslationUseCase,
+)
+from src.intent_translation.application.segment_screenshot_pairer import (
+    SegmentScreenshotPairer,
+)
+from src.intent_translation.infrastructure.azure_openai_intent_translator import (
+    AzureOpenAIIntentTranslator,
+)
+from src.intent_translation.infrastructure.screenshot.mss_screenshot_capturer import (
+    MssScreenshotCapturer,
 )
 from src.proofreading.application.proofread_text_use_case import ProofreadTextUseCase
 from src.proofreading.infrastructure.vertex_gemini_proofreader import (
     VertexGeminiProofreader,
 )
+from src.shared.config.jsonc_settings_repository import JsoncSettingsRepository
 from src.shared.config.secrets_loader import Secrets, load_secrets
 from src.shared.config.settings import load_settings
+from src.shared.herdr.socket_client import HerdrSocketClient
 from src.shared.process.signal_process_shutdowner import ProcessShutdowner
 from src.transcript_history.application.finalize_session_use_case import (
     FinalizeSessionUseCase,
@@ -40,7 +55,11 @@ from src.transcript_history.infrastructure.pyperclip_clipboard import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.dictation.domain.ports import AudioCapturePort
+    from src.shared.config.ports import SettingsRepositoryPort
+    from src.shared.herdr.ports import HerdrClientPort
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +77,28 @@ def _load_secrets_or_empty() -> Secrets:
         return Secrets(
             mai_api_key="", mai_endpoint="", vertex_sa_info={}, vertex_project=""
         )
+
+
+def _settings_file_path(history_dir: Path) -> Path:
+    """動的設定ファイルのパスを組み立てる。
+
+    履歴 (`history.jsonl`) と同じアプリ専用ディレクトリ配下に置く。
+    E2E テストが `FRAETOR_HISTORY_DIR` を差し替えると設定ファイルも
+    一緒に隔離されるため、テスト間で設定が漏れない。
+    """
+    return history_dir / "settings.jsonc"
+
+
+def _segment_silence_sec_fn(
+    settings_repository: SettingsRepositoryPort,
+) -> Callable[[], float]:
+    """無音区切り閾値を都度読む callable を返す。
+
+    `AudioPipelineCoordinator` は Singleton なので、値を直接渡すと起動時の
+    値に固定されてしまう。セッション開始時に評価される callable を渡すことで
+    「次のセッションから反映」を成立させる。
+    """
+    return lambda: settings_repository.get().segment_silence_sec
 
 
 def _create_proofreader(
@@ -79,6 +120,31 @@ def _create_proofreader(
     )
 
 
+def _create_intent_translator(
+    *,
+    mai_api_key: str,
+    mai_endpoint: str,
+    deployment: str,
+    api_version: str,
+    prompt: str,
+) -> AzureOpenAIIntentTranslator | None:
+    """MAI用シークレットを流用してAzure OpenAI互換クライアントを生成する。
+
+    同一Azureリソースを STT (MaiTranscribeClient) とチャット補完 (意図翻訳)
+    の両方で使うため、専用のシークレットは追加せず mai_api_key/mai_endpoint
+    をそのまま使う。
+    """
+    if not mai_api_key or not mai_endpoint:
+        return None
+    return AzureOpenAIIntentTranslator(
+        endpoint=mai_endpoint,
+        api_key=mai_api_key,
+        deployment=deployment,
+        api_version=api_version,
+        prompt=prompt,
+    )
+
+
 class Container(containers.DeclarativeContainer):
     """アプリケーション全体のDIコンテナ。
 
@@ -89,6 +155,13 @@ class Container(containers.DeclarativeContainer):
 
     settings = providers.Singleton(load_settings)
     secrets = providers.Singleton(_load_secrets_or_empty)
+
+    settings_repository = providers.Singleton(
+        JsoncSettingsRepository,
+        path=providers.Callable(
+            _settings_file_path, history_dir=settings.provided.history_dir
+        ),
+    )
 
     templates_dir = providers.Object(Path(__file__).parent / "templates")
 
@@ -101,31 +174,67 @@ class Container(containers.DeclarativeContainer):
 
     app_state = providers.Singleton(AppState, broadcaster=broadcaster)
 
+    # 動的設定に依存する値 (locale/model/timeout/threshold) は provider の
+    # 引数として束縛せず、ファクトリ関数が呼び出し時に settings_repository
+    # から読む。DI 配線時に値が固定されると設定画面の変更が反映されない。
     stt_engine_factory = providers.Factory(
         create_stt_engine,
+        settings_repository=settings_repository,
         endpoint=secrets.provided.mai_endpoint,
         api_key=secrets.provided.mai_api_key,
-        locale=settings.provided.mai_locale,
-        model_name=settings.provided.mai_model_name,
-        timeout_sec=settings.provided.mai_timeout_sec,
         sample_rate=settings.provided.stt_sample_rate,
     ).provider
 
     vad_factory = providers.Factory(
-        SileroSpeechActivityDetector,
+        create_vad,
+        settings_repository=settings_repository,
         sample_rate=settings.provided.stt_sample_rate,
-        threshold=settings.provided.vad_threshold,
     ).provider
+
+    screenshot_capture = providers.Singleton(MssScreenshotCapturer)
+
+    segment_screenshot_pairer = providers.Singleton(
+        SegmentScreenshotPairer,
+        screenshot_capture=screenshot_capture,
+        settings_repository=settings_repository,
+    )
+
+    intent_translator = providers.Singleton(
+        _create_intent_translator,
+        mai_api_key=secrets.provided.mai_api_key,
+        mai_endpoint=secrets.provided.mai_endpoint,
+        deployment=settings.provided.intent_translation_model_name,
+        api_version=settings.provided.azure_openai_api_version,
+        prompt=settings.provided.intent_translation_prompt,
+    )
+
+    intent_translation_use_case = providers.Singleton(
+        IntentTranslationUseCase,
+        translator=intent_translator,
+        settings_repository=settings_repository,
+    )
+
+    intent_translation_dictation_adapter = providers.Singleton(
+        IntentTranslationDictationAdapter,
+        pairer=segment_screenshot_pairer,
+        use_case=intent_translation_use_case,
+    )
 
     audio_pipeline_coordinator = providers.Singleton(
         AudioPipelineCoordinator,
         audio_capture=audio_capture,
         stt_engine_factory=stt_engine_factory,
         vad_factory=vad_factory,
+        segment_silence_sec_fn=providers.Callable(
+            _segment_silence_sec_fn, settings_repository=settings_repository
+        ),
+        segment_lifecycle_hook=intent_translation_dictation_adapter,
     )
 
     segment_accumulator = providers.Singleton(
-        SegmentAccumulator, broadcaster=broadcaster
+        SegmentAccumulator,
+        broadcaster=broadcaster,
+        text_transform=intent_translation_dictation_adapter,
     )
 
     stt_event_relay = providers.Singleton(
@@ -142,8 +251,7 @@ class Container(containers.DeclarativeContainer):
         audio_pipeline=audio_pipeline_coordinator,
         event_relay=stt_event_relay,
         transcription_queue=transcription_queue,
-        max_session_duration_sec=settings.provided.max_session_duration_sec,
-        silence_timeout_sec=settings.provided.silence_timeout_sec,
+        settings_repository=settings_repository,
     )
 
     history_repository = providers.Singleton(
@@ -171,7 +279,11 @@ class Container(containers.DeclarativeContainer):
     proofread_text_use_case = providers.Singleton(
         ProofreadTextUseCase,
         proofreader=proofreader,
-        timeout_sec=settings.provided.proofread_timeout_sec,
+        settings_repository=settings_repository,
     )
 
     shutdowner = providers.Singleton(ProcessShutdowner)
+
+    herdr_client: providers.Provider[HerdrClientPort] = providers.Singleton(
+        HerdrSocketClient
+    )

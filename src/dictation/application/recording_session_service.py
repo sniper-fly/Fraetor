@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     )
     from src.dictation.application.stt_event_relay import SttEventRelay
     from src.dictation.application.transcription_queue import TranscriptionQueue
+    from src.shared.config.ports import SettingsRepositoryPort
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +38,23 @@ class RecordingSessionService:
         event_relay: SttEventRelay,
         transcription_queue: TranscriptionQueue,
         *,
-        max_session_duration_sec: float,
-        silence_timeout_sec: float,
+        settings_repository: SettingsRepositoryPort,
     ) -> None:
         self._app_state = app_state
         self._audio_pipeline = audio_pipeline
         self._event_relay = event_relay
         self._transcription_queue = transcription_queue
-        self._max_session_duration_sec = max_session_duration_sec
-        self._silence_timeout_sec = silence_timeout_sec
+        self._settings_repository = settings_repository
         self._lock = asyncio.Lock()
         self._timeout_monitor: SessionTimeoutMonitor | None = None
 
-    async def start_session(self) -> None:
+    async def start_session(
+        self,
+        *,
+        target_pane_id: str | None = None,
+        target_pane_label: str | None = None,
+        herdr_requested: bool = False,
+    ) -> None:
         """セッションを開始し、録音を開始する。"""
         async with self._lock:
             if self._app_state.recording:
@@ -59,6 +64,7 @@ class RecordingSessionService:
                 id=str(uuid4()),
                 segments=[],
                 started_at=datetime.now(tz=UTC),
+                target_pane_id=target_pane_id,
             )
             self._app_state.current_session = session
             self._app_state.recording = True
@@ -75,16 +81,27 @@ class RecordingSessionService:
                 msg = "audio_pipeline.start() succeeded but event_queue is None"
                 raise RuntimeError(msg)
             self._event_relay.start(event_queue)
+            # タイムアウト値はセッション開始のたびに読む (設定画面からの
+            # 変更を次のセッションから反映するため)。監視中の値の差し替えは
+            # 行わない。
+            settings = self._settings_repository.get()
             self._timeout_monitor = SessionTimeoutMonitor(
-                max_duration_sec=self._max_session_duration_sec,
-                silence_timeout_sec=self._silence_timeout_sec,
+                max_duration_sec=settings.max_session_duration_sec,
+                silence_timeout_sec=settings.silence_timeout_sec,
                 last_speech_time_fn=self._audio_pipeline.last_speech_time,
                 on_timeout=self._on_timeout,
             )
             self._timeout_monitor.start()
 
             await self._app_state.broadcaster.broadcast(
-                "status", {"recording": True, "session_id": session.id}
+                "status",
+                {
+                    "recording": True,
+                    "session_id": session.id,
+                    "target_pane_id": target_pane_id,
+                    "target_pane_label": target_pane_label,
+                    "herdr_requested": herdr_requested,
+                },
             )
             logger.info("Session started: %s", session.id)
 
@@ -96,7 +113,9 @@ class RecordingSessionService:
             "error", {"message": "セッション開始に失敗しました。"}
         )
 
-    async def stop_session(self, *, timed_out: bool = False) -> None:
+    async def stop_session(
+        self, *, timed_out: bool = False, herdr_send_confirmed: bool = False
+    ) -> None:
         """録音を停止し、文字起こしジョブをキューに投入する。
 
         文字起こし完了 (STTの `stop()`) を待たずに即座に返る。処理完了後の
@@ -131,7 +150,14 @@ class RecordingSessionService:
                     )
                 )
 
-            await self._app_state.broadcaster.broadcast("status", {"recording": False})
+            await self._app_state.broadcaster.broadcast(
+                "status",
+                {
+                    "recording": False,
+                    "session_id": recording_session.id if recording_session else None,
+                    "herdr_send_confirmed": herdr_send_confirmed,
+                },
+            )
 
             if recording_session:
                 logger.info(
