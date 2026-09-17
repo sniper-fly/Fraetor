@@ -31,6 +31,10 @@ _FIELD_COMMENTS = {
     "vad_threshold": "発話区間検出の閾値 (0.0〜1.0)。小さいほど発話と判定しやすい",
     "mai_locale": "MAI Transcribe に指定する言語ロケール",
     "mai_model_name": "MAI Transcribe のモデル名",
+    "mai_transcribe_style": (
+        "MAI Transcribe の出力スタイル。verbatim はフィラー・言い直しを含む逐語、"
+        "clean はフィラーを除去した読みやすい文字起こし"
+    ),
     "mai_timeout_sec": "MAI Transcribe への1リクエストのタイムアウト (秒)",
     "proofread_timeout_sec": "Gemini による校正のタイムアウト (秒)",
     "shutdown_delay_sec": "終了リクエスト受付からプロセス終了までの遅延 (秒)",

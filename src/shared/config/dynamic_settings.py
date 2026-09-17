@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -21,7 +23,8 @@ class DynamicSettings(BaseModel):
     vad_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
     mai_locale: str = "ja"
-    mai_model_name: str = "mai-transcribe-1"
+    mai_model_name: Literal["MAI-Transcribe-2"] = "MAI-Transcribe-2"
+    mai_transcribe_style: Literal["clean", "verbatim"] = "verbatim"
     mai_timeout_sec: float = Field(default=60, gt=0)
 
     proofread_timeout_sec: float = Field(default=15, gt=0)

@@ -42,6 +42,7 @@ def _make_client(
         api_key=secrets.mai_api_key,
         locale=dynamic.mai_locale,
         model_name=dynamic.mai_model_name,
+        transcribe_style=dynamic.mai_transcribe_style,
         timeout_sec=timeout_sec if timeout_sec is not None else dynamic.mai_timeout_sec,
         sample_rate=settings.stt_sample_rate,
     )

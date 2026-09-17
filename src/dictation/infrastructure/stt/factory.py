@@ -37,6 +37,7 @@ def create_stt_engine(
         api_key=api_key,
         locale=settings.mai_locale,
         model_name=settings.mai_model_name,
+        transcribe_style=settings.mai_transcribe_style,
         timeout_sec=settings.mai_timeout_sec,
         sample_rate=sample_rate,
     )

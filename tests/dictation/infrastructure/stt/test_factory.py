@@ -38,14 +38,15 @@ class TestCreateSttEngine:
     def test_passes_current_dynamic_values(self) -> None:
         repo = InMemorySettingsRepository(
             DynamicSettings(
-                mai_locale="en", mai_model_name="other-model", mai_timeout_sec=30
+                mai_locale="en", mai_transcribe_style="clean", mai_timeout_sec=30
             )
         )
 
         engine, _ = _create(repo)
 
         assert engine._locale == "en"
-        assert engine._model_name == "other-model"
+        assert engine._model_name == "MAI-Transcribe-2"
+        assert engine._transcribe_style == "clean"
         assert engine._timeout_sec == 30
 
     def test_reads_values_at_each_call(self) -> None:

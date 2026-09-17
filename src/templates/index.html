@@ -545,14 +545,16 @@ async function deleteHistory(event, sessionId) {
 
 // --- 設定タブ ---
 // key は DynamicSettings のフィールド名と一致させる。
-// step があれば type="number" (小数は step で刻みを指定)、なければ type="text"。
+// options があれば type="select" (選択肢固定)、step があれば type="number"
+// (小数は step で刻みを指定)、どちらもなければ type="text"。
 const SETTINGS_FIELDS = [
   { key: 'max_session_duration_sec', label: '最大セッション時間', unit: '秒', step: '1' },
   { key: 'silence_timeout_sec', label: '無音セッション終了', unit: '秒', step: '1' },
   { key: 'segment_silence_sec', label: '無音区切り (逐次文字起こし)', unit: '秒', step: '0.5' },
   { key: 'vad_threshold', label: '発話判定の閾値', unit: '0〜1', step: '0.05' },
   { key: 'mai_locale', label: '認識ロケール', unit: '' },
-  { key: 'mai_model_name', label: '認識モデル', unit: '' },
+  { key: 'mai_model_name', label: '認識モデル', unit: '', options: ['MAI-Transcribe-2'] },
+  { key: 'mai_transcribe_style', label: '認識モデル: 出力スタイル', unit: '', options: ['verbatim', 'clean'], optionLabels: { verbatim: 'verbatim (フィラーを含む逐語)', clean: 'clean (フィラー除去)' } },
   { key: 'mai_timeout_sec', label: '認識タイムアウト', unit: '秒', step: '1' },
   { key: 'proofread_timeout_sec', label: '校正タイムアウト', unit: '秒', step: '1' },
   { key: 'shutdown_delay_sec', label: '終了までの遅延', unit: '秒', step: '0.1' },
@@ -583,14 +585,19 @@ async function loadSettings() {
     container.innerHTML = '<p class="text-gray-500">設定の読み込みに失敗しました</p>';
     return;
   }
+  const fieldInputClass = 'w-40 bg-gray-900 text-gray-100 text-sm px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500';
   container.innerHTML = SETTINGS_FIELDS.map(f => `
     <div class="flex items-center justify-between bg-gray-800 rounded p-3">
       <label for="setting-${f.key}" class="text-sm">${escapeHtml(f.label)}</label>
       <div class="flex items-center gap-2">
-        <input id="setting-${f.key}" data-key="${f.key}"
-          type="${f.step ? 'number' : 'text'}"${f.step ? ` step="${f.step}"` : ''}
-          value="${escapeAttr(loadedSettings[f.key])}"
-          class="w-40 bg-gray-900 text-gray-100 text-sm px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500">
+        ${f.options
+          ? `<select id="setting-${f.key}" data-key="${f.key}" class="${fieldInputClass}">
+              ${f.options.map(o => `<option value="${escapeAttr(o)}"${loadedSettings[f.key] === o ? ' selected' : ''}>${escapeHtml((f.optionLabels && f.optionLabels[o]) || o)}</option>`).join('')}
+            </select>`
+          : `<input id="setting-${f.key}" data-key="${f.key}"
+              type="${f.step ? 'number' : 'text'}"${f.step ? ` step="${f.step}"` : ''}
+              value="${escapeAttr(loadedSettings[f.key])}"
+              class="${fieldInputClass}">`}
         <span class="text-xs text-gray-400 w-10">${escapeHtml(f.unit)}</span>
       </div>
     </div>`).join('');

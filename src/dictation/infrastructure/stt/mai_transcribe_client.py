@@ -24,7 +24,7 @@ _PCM_CHANNELS = 1
 
 
 class MaiTranscribeClient(SttEnginePort):
-    """MAI-Transcribe-1 によるバッチ文字起こしクライアント。
+    """MAI-Transcribe によるバッチ文字起こしクライアント。
 
     feed_audio で蓄積した PCM を、無音区切りごとの `flush()` と最終の `stop()`
     で WAV 化し、Azure Foundry の LLM Speech API へ送信する。結果は
@@ -46,6 +46,7 @@ class MaiTranscribeClient(SttEnginePort):
         api_key: str,
         locale: str,
         model_name: str,
+        transcribe_style: str,
         timeout_sec: float,
         sample_rate: int,
     ) -> None:
@@ -62,6 +63,7 @@ class MaiTranscribeClient(SttEnginePort):
         )
         self._locale = locale
         self._model_name = model_name
+        self._transcribe_style = transcribe_style
         self._timeout_sec = timeout_sec
         self._sample_rate = sample_rate
 
@@ -146,11 +148,13 @@ class MaiTranscribeClient(SttEnginePort):
         return bio.getvalue()
 
     def _transcribe_sync(self, wav_bytes: bytes) -> str:
-        # SDK b4 では EnhancedModeProperties に model フィールドが公開されていないため、
-        # MutableMapping の __setitem__ 経由で REST 仕様 (enhancedMode.model) を満たす。
+        # SDK b4 では EnhancedModeProperties に model/modelOptions フィールドが
+        # 公開されていないため、MutableMapping の __setitem__ 経由で REST 仕様
+        # (enhancedMode.model, enhancedMode.modelOptions.transcribeStyle) を満たす。
         enhanced_mode = EnhancedModeProperties()
         enhanced_mode["enabled"] = True
         enhanced_mode["model"] = self._model_name
+        enhanced_mode["modelOptions"] = {"transcribeStyle": self._transcribe_style}
         options = TranscriptionOptions(
             locales=[self._locale],
             enhanced_mode=enhanced_mode,

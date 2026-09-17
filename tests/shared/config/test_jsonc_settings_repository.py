@@ -104,13 +104,13 @@ class TestUpdate:
         path = tmp_path / "settings.jsonc"
         repo = JsoncSettingsRepository(path)
 
-        repo.update(DynamicSettings(mai_model_name="other-model"))
+        repo.update(DynamicSettings(mai_transcribe_style="clean"))
 
         assert (
-            json5.loads(path.read_text(encoding="utf-8"))["mai_model_name"]
-            == "other-model"
+            json5.loads(path.read_text(encoding="utf-8"))["mai_transcribe_style"]
+            == "clean"
         )
-        assert JsoncSettingsRepository(path).get().mai_model_name == "other-model"
+        assert JsoncSettingsRepository(path).get().mai_transcribe_style == "clean"
 
     def test_rewrites_all_fields(self, tmp_path: Path) -> None:
         path = tmp_path / "settings.jsonc"

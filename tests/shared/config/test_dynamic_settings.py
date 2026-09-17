@@ -15,7 +15,8 @@ class TestDefaults:
         assert settings.segment_silence_sec == 3.0
         assert settings.vad_threshold == 0.5
         assert settings.mai_locale == "ja"
-        assert settings.mai_model_name == "mai-transcribe-1"
+        assert settings.mai_model_name == "MAI-Transcribe-2"
+        assert settings.mai_transcribe_style == "verbatim"
         assert settings.mai_timeout_sec == 60
         assert settings.proofread_timeout_sec == 15
         assert settings.shutdown_delay_sec == 0.5

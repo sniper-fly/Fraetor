@@ -12,6 +12,8 @@ _SAMPLE_RATE = 16000
 
 def _make_client(
     queue: asyncio.Queue[dict[str, str]] | None = None,
+    *,
+    transcribe_style: str = "verbatim",
 ) -> tuple[MaiTranscribeClient, MagicMock]:
     """MaiTranscribeClient と SDK モックを返す。"""
     if queue is None:
@@ -24,7 +26,8 @@ def _make_client(
             endpoint="https://mai.example/",
             api_key="test-key",
             locale="ja",
-            model_name="mai-transcribe-1",
+            model_name="MAI-Transcribe-2",
+            transcribe_style=transcribe_style,
             timeout_sec=60,
             sample_rate=_SAMPLE_RATE,
         )
@@ -127,13 +130,32 @@ class TestStop:
 
         mock_sdk_client.transcribe.assert_called_once()
         request = mock_sdk_client.transcribe.call_args.args[0]
-        # enhancedMode.model で MAI モデルを指定 (REST 仕様準拠)
+        # enhancedMode.model/modelOptions でモデルと出力スタイルを指定 (REST 仕様準拠)
         assert request.definition.locales == ["ja"]
-        assert request.definition.enhanced_mode["model"] == "mai-transcribe-1"
+        assert request.definition.enhanced_mode["model"] == "MAI-Transcribe-2"
         assert request.definition.enhanced_mode["enabled"] is True
+        assert request.definition.enhanced_mode["modelOptions"] == {
+            "transcribeStyle": "verbatim"
+        }
 
         event = queue.get_nowait()
         assert event == {"type": "recognized", "text": "認識結果テキスト"}
+
+    async def test_invokes_transcribe_with_clean_style(self) -> None:
+        """transcribe_style="clean" が modelOptions.transcribeStyle に反映される。"""
+        client, mock_sdk_client = _make_client(transcribe_style="clean")
+        result = MagicMock()
+        result.combined_phrases = [MagicMock(text="認識結果テキスト")]
+        mock_sdk_client.transcribe.return_value = result
+
+        await client.start()
+        client.feed_audio(b"\x00" * 32)
+        await client.stop()
+
+        request = mock_sdk_client.transcribe.call_args.args[0]
+        assert request.definition.enhanced_mode["modelOptions"] == {
+            "transcribeStyle": "clean"
+        }
 
     async def test_empty_text_is_skipped(self) -> None:
         queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()

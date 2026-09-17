@@ -307,8 +307,8 @@ pyperclip でクリップボードにコピー
 
 **動的化の対象**: `max_session_duration_sec` / `silence_timeout_sec` /
 `segment_silence_sec` / `vad_threshold` / `mai_locale` / `mai_model_name` /
-`mai_timeout_sec` / `proofread_timeout_sec` / `shutdown_delay_sec` /
-`sse_keepalive_sec` / `herdr_slot_count`
+`mai_transcribe_style` / `mai_timeout_sec` / `proofread_timeout_sec` /
+`shutdown_delay_sec` / `sse_keepalive_sec` / `herdr_slot_count`
 
 **`Settings` に残すもの (動的化しない)**: `stt_sample_rate` (Singletonの
 `audio_capture` に紐づき、マイクストリーム再起動が必要)、`proofread_prompt` /
@@ -434,7 +434,8 @@ silence_timeout_sec = 120            # 発話終了からの無音タイムア�
 segment_silence_sec = 3.0            # 無音区切り (逐次文字起こし)。上記より小さいこと
 vad_threshold = 0.5                  # 発話判定の閾値 (0.0〜1.0)
 mai_locale = "ja"                    # 認識ロケール
-mai_model_name = "mai-transcribe-1"  # 認識モデル
+mai_model_name = "MAI-Transcribe-2"  # 認識モデル (対応モデルのみ選択可)
+mai_transcribe_style = "verbatim"    # 出力スタイル (verbatim=逐語 / clean=フィラー除去)
 mai_timeout_sec = 60                 # 認識APIタイムアウト
 proofread_timeout_sec = 15           # 校正APIタイムアウト
 shutdown_delay_sec = 0.5             # 終了リクエストからプロセス終了までの遅延
