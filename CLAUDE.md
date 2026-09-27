@@ -55,3 +55,17 @@ DIコンテナは`dependency-injector`を使用し、`src/containers.py`の
 FastAPIルートへの`@inject`+`Provide[]`wiringは使用しない(mypy strict
 との相性問題のため)。`src/containers.py`のみ型安全性の緩和を許容する。
 
+## dictationモジュール(外部ライブラリ)
+
+音声認識機能(旧`src/dictation/`)は[fraetor-dictation](https://github.com/sniper-fly/fraetor-dictation)
+として切り出し済み。Fraetorは`uv add`でgitタグ指定して依存し、
+importパッケージ名は`dictation`(`src.dictation`ではない)。
+`SegmentLifecycleHookPort`/`RecognizedTextTransformPort`/
+`SessionFinalizationHookPort`等のポートはこのライブラリのdomain層に
+定義されており、Fraetor側の実装(`intent_translation`/`transcript_history`)
+がアダプタとして接続する。
+
+dictation自体の改良(バグ修正・機能追加)はこのリポジトリではなく
+fraetor-dictationリポジトリ側で行う。ローカルのクローン先は
+`CLAUDE.local.md`を参照。
+
