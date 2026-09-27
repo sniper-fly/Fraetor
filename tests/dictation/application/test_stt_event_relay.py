@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from src.dictation.application.app_state import AppState
 from src.dictation.application.segment_accumulator import SegmentAccumulator
 from src.dictation.application.stt_event_relay import SttEventRelay
+from src.dictation.domain.events import InterimEvent, RecognizedEvent, SttEvent
 from src.dictation.domain.models import RecordingSession
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 
@@ -26,10 +27,10 @@ class TestWatch:
         accumulator = SegmentAccumulator(app_state.broadcaster)
         relay = SttEventRelay(app_state, accumulator)
         sub = app_state.broadcaster.subscribe()
-        event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        event_queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         relay.start(event_queue)
 
-        event_queue.put_nowait({"type": "interim", "text": "中間結果"})
+        event_queue.put_nowait(InterimEvent(text="中間結果"))
         await asyncio.sleep(0.05)
 
         msg = sub.get_nowait()
@@ -46,10 +47,10 @@ class TestWatch:
         accumulator = SegmentAccumulator(app_state.broadcaster)
         relay = SttEventRelay(app_state, accumulator)
         sub = app_state.broadcaster.subscribe()
-        event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        event_queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         relay.start(event_queue)
 
-        event_queue.put_nowait({"type": "recognized", "text": "認識結果"})
+        event_queue.put_nowait(RecognizedEvent(text="認識結果"))
         await asyncio.sleep(0.05)
 
         session = app_state.current_session
@@ -72,11 +73,11 @@ class TestWatch:
         app_state = _make_app_state()
         accumulator = SegmentAccumulator(app_state.broadcaster)
         relay = SttEventRelay(app_state, accumulator)
-        event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        event_queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         relay.start(event_queue)
 
-        event_queue.put_nowait({"type": "recognized", "text": "1つ目"})
-        event_queue.put_nowait({"type": "recognized", "text": "2つ目"})
+        event_queue.put_nowait(RecognizedEvent(text="1つ目"))
+        event_queue.put_nowait(RecognizedEvent(text="2つ目"))
         await asyncio.sleep(0.05)
 
         session = app_state.current_session
@@ -92,9 +93,9 @@ class TestWatch:
         app_state = _make_app_state()
         accumulator = SegmentAccumulator(app_state.broadcaster)
         relay = SttEventRelay(app_state, accumulator)
-        event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        event_queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         relay.start(event_queue)
-        event_queue.put_nowait({"type": "recognized", "text": "1つ目"})
+        event_queue.put_nowait(RecognizedEvent(text="1つ目"))
         await asyncio.sleep(0.05)
         await relay.stop()
 
@@ -103,9 +104,9 @@ class TestWatch:
             segments=[],
             started_at=datetime.now(tz=UTC),
         )
-        event_queue2: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        event_queue2: asyncio.Queue[SttEvent] = asyncio.Queue()
         relay.start(event_queue2)
-        event_queue2.put_nowait({"type": "recognized", "text": "2セッション目"})
+        event_queue2.put_nowait(RecognizedEvent(text="2セッション目"))
         await asyncio.sleep(0.05)
 
         session = app_state.current_session
@@ -119,11 +120,11 @@ class TestWatch:
         app_state = _make_app_state()
         accumulator = SegmentAccumulator(app_state.broadcaster)
         relay = SttEventRelay(app_state, accumulator)
-        event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        event_queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         relay.start(event_queue)
 
         await relay.stop()
-        event_queue.put_nowait({"type": "recognized", "text": "ドレインされない"})
+        event_queue.put_nowait(RecognizedEvent(text="ドレインされない"))
         await asyncio.sleep(0.05)
 
         session = app_state.current_session

@@ -13,11 +13,15 @@ import re
 import time
 import wave
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import responses
 
 from src.containers import Container
 from src.dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
+
+if TYPE_CHECKING:
+    from src.dictation.domain.events import SttEvent
 
 _TRANSCRIBE_URL_PATTERN = re.compile(r".*/speechtotext/transcriptions:transcribe.*")
 _SILENCE_PCM = b"\x00\x00" * 1600  # 0.1秒分の無音 (16kHz/16bit/mono)
@@ -30,7 +34,7 @@ _EXPECTED_TEXT = "今日の会議の議事録をまとめました。よろし�
 
 
 def _make_client(
-    queue: asyncio.Queue[dict[str, str]], *, timeout_sec: float | None = None
+    queue: asyncio.Queue[SttEvent], *, timeout_sec: float | None = None
 ) -> MaiTranscribeClient:
     container = Container()
     secrets = container.secrets()
@@ -55,7 +59,7 @@ class TestRealCloudCommunication:
         with wave.open(str(wav_path), "rb") as wf:
             pcm = wf.readframes(wf.getnframes())
 
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client = _make_client(queue)
         await client.start()
         client.feed_audio(pcm)
@@ -63,9 +67,9 @@ class TestRealCloudCommunication:
 
         assert not queue.empty(), "実クラウド通信でrecognizedイベントが届かなかった"
         event = queue.get_nowait()
-        assert event["type"] == "recognized"
-        assert event["text"], "認識結果テキストが空だった"
-        print(f"\n[期待発話] {_EXPECTED_TEXT}\n[認識結果] {event['text']}")
+        assert event.type == "recognized"
+        assert event.text, "認識結果テキストが空だった"
+        print(f"\n[期待発話] {_EXPECTED_TEXT}\n[認識結果] {event.text}")
 
 
 class TestErrorResponses:
@@ -78,7 +82,7 @@ class TestErrorResponses:
                 status=401,
                 json={"error": "unauthorized"},
             )
-            queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            queue: asyncio.Queue[SttEvent] = asyncio.Queue()
             client = _make_client(queue)
             await client.start()
             client.feed_audio(_SILENCE_PCM)
@@ -95,7 +99,7 @@ class TestErrorResponses:
                 status=429,
                 json={"error": "too many requests"},
             )
-            queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            queue: asyncio.Queue[SttEvent] = asyncio.Queue()
             client = _make_client(queue)
             await client.start()
             client.feed_audio(_SILENCE_PCM)
@@ -112,7 +116,7 @@ class TestErrorResponses:
                 status=503,
                 json={"error": "service unavailable"},
             )
-            queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            queue: asyncio.Queue[SttEvent] = asyncio.Queue()
             client = _make_client(queue)
             await client.start()
             client.feed_audio(_SILENCE_PCM)
@@ -135,7 +139,7 @@ class TestErrorResponses:
                 _TRANSCRIBE_URL_PATTERN,
                 callback=_slow_response,
             )
-            queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            queue: asyncio.Queue[SttEvent] = asyncio.Queue()
             client = _make_client(queue, timeout_sec=0.1)
             await client.start()
             client.feed_audio(_SILENCE_PCM)

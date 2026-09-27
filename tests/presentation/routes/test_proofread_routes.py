@@ -10,7 +10,9 @@ from src.transcript_history.domain.models import FinalizedSession
 if TYPE_CHECKING:
     from starlette.testclient import TestClient
 
-    from src.dictation.application.app_state import AppState
+    from src.transcript_history.application.pending_session_store import (
+        PendingSessionStore,
+    )
 
 
 def _make_pending_session(session_id: str = "pending-session-id") -> FinalizedSession:
@@ -48,9 +50,11 @@ class TestProofread:
 
 class TestFinalizeSession:
     def test_calls_use_case_and_clears_pending(self, client: TestClient) -> None:
-        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
+        pending_session_store: PendingSessionStore = (
+            client.app.state.pending_session_store  # type: ignore[attr-defined]
+        )
         pending = _make_pending_session()
-        app_state.add_pending_session(pending)
+        pending_session_store.add(pending)
         mock_use_case = AsyncMock()
         client.app.state.finalize_session_use_case = mock_use_case  # type: ignore[attr-defined]
 
@@ -61,7 +65,7 @@ class TestFinalizeSession:
 
         assert response.json() == {"ok": True}
         mock_use_case.execute.assert_called_once_with(pending, text="edited text")
-        assert app_state.pending_sessions == []
+        assert pending_session_store.pop(pending.id) is None
 
     def test_returns_false_when_no_pending(self, client: TestClient) -> None:
         mock_use_case = AsyncMock()
@@ -78,12 +82,14 @@ class TestFinalizeSession:
 class TestFinalizeSessionWithMultiplePending:
     def test_finalizes_only_specified_session_id(self, client: TestClient) -> None:
         """複数セッションが同時に確定待ちの状態でも、指定したsession_idのみが
-        確定され、他のpending_sessionsに影響しない (取り違え防止の回帰テスト)。"""
-        app_state: AppState = client.app.state.app_state  # type: ignore[attr-defined]
+        確定され、他のpendingに影響しない (取り違え防止の回帰テスト)。"""
+        pending_session_store: PendingSessionStore = (
+            client.app.state.pending_session_store  # type: ignore[attr-defined]
+        )
         first = _make_pending_session("first")
         second = _make_pending_session("second")
-        app_state.add_pending_session(first)
-        app_state.add_pending_session(second)
+        pending_session_store.add(first)
+        pending_session_store.add(second)
         mock_use_case = AsyncMock()
         client.app.state.finalize_session_use_case = mock_use_case  # type: ignore[attr-defined]
 
@@ -94,4 +100,5 @@ class TestFinalizeSessionWithMultiplePending:
 
         assert response.json() == {"ok": True}
         mock_use_case.execute.assert_called_once_with(second, text="second text")
-        assert [s.id for s in app_state.pending_sessions] == ["first"]
+        assert pending_session_store.pop("first") == first
+        assert pending_session_store.pop("second") is None

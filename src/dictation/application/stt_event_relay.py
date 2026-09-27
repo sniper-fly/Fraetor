@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.dictation.application.app_state import AppState
     from src.dictation.application.segment_accumulator import SegmentAccumulator
+    from src.dictation.domain.events import SttEvent
 
 
 class SttEventRelay:
@@ -22,7 +23,7 @@ class SttEventRelay:
         self._accumulator = accumulator
         self._task: asyncio.Task[None] | None = None
 
-    def start(self, event_queue: asyncio.Queue[dict[str, str]]) -> None:
+    def start(self, event_queue: asyncio.Queue[SttEvent]) -> None:
         self._task = asyncio.create_task(self._watch(event_queue))
 
     async def stop(self) -> None:
@@ -33,7 +34,7 @@ class SttEventRelay:
                 await self._task
             self._task = None
 
-    async def _watch(self, event_queue: asyncio.Queue[dict[str, str]]) -> None:
+    async def _watch(self, event_queue: asyncio.Queue[SttEvent]) -> None:
         try:
             while True:
                 event = await event_queue.get()

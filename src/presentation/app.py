@@ -58,6 +58,7 @@ def _build_lifespan(
         app.state.proofread_text_use_case = container.proofread_text_use_case()
         app.state.settings_repository = settings_repository
         app.state.herdr_client = container.herdr_client()
+        app.state.pending_session_store = container.pending_session_store()
 
         app.state.transcription_queue.start()
         logger.info("Fraetor starting")

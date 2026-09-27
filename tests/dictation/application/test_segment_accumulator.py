@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 from src.dictation.application.segment_accumulator import SegmentAccumulator
+from src.dictation.domain.events import InterimEvent, RecognizedEvent, SttEvent
 from src.dictation.domain.models import RecordingSession
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 
@@ -23,7 +24,7 @@ class TestHandleEvent:
         accumulator = SegmentAccumulator(broadcaster)
         session = _make_session()
 
-        await accumulator.handle_event(session, {"type": "interim", "text": "中間"})
+        await accumulator.handle_event(session, InterimEvent(text="中間"))
 
         assert session.segments == []
         msg = sub.get_nowait()
@@ -38,9 +39,7 @@ class TestHandleEvent:
         accumulator = SegmentAccumulator(broadcaster)
         session = _make_session()
 
-        await accumulator.handle_event(
-            session, {"type": "recognized", "text": "認識結果"}
-        )
+        await accumulator.handle_event(session, RecognizedEvent(text="認識結果"))
 
         assert len(session.segments) == 1
         assert session.segments[0].id == 0
@@ -58,8 +57,8 @@ class TestHandleEvent:
         accumulator = SegmentAccumulator(broadcaster)
         session = _make_session()
 
-        await accumulator.handle_event(session, {"type": "recognized", "text": "1つ目"})
-        await accumulator.handle_event(session, {"type": "recognized", "text": "2つ目"})
+        await accumulator.handle_event(session, RecognizedEvent(text="1つ目"))
+        await accumulator.handle_event(session, RecognizedEvent(text="2つ目"))
 
         assert session.segments[0].id == 0
         assert session.segments[1].id == 1
@@ -68,9 +67,7 @@ class TestHandleEvent:
         broadcaster = SSEBroadcaster()
         accumulator = SegmentAccumulator(broadcaster)
 
-        await accumulator.handle_event(
-            None, {"type": "recognized", "text": "無視される"}
-        )
+        await accumulator.handle_event(None, RecognizedEvent(text="無視される"))
 
     async def test_recognized_passes_through_text_transform(self) -> None:
         """recognizedイベントのテキストはSegment生成前にtransformされる。"""
@@ -81,9 +78,7 @@ class TestHandleEvent:
         accumulator = SegmentAccumulator(broadcaster, text_transform=text_transform)
         session = _make_session()
 
-        await accumulator.handle_event(
-            session, {"type": "recognized", "text": "変換前"}
-        )
+        await accumulator.handle_event(session, RecognizedEvent(text="変換前"))
 
         text_transform.transform.assert_awaited_once_with("session-1", "変換前")
         assert session.segments[0].text == "変換後"
@@ -98,7 +93,7 @@ class TestHandleEvent:
         accumulator = SegmentAccumulator(broadcaster, text_transform=text_transform)
         session = _make_session()
 
-        await accumulator.handle_event(session, {"type": "interim", "text": "中間"})
+        await accumulator.handle_event(session, InterimEvent(text="中間"))
 
         text_transform.transform.assert_not_awaited()
 
@@ -109,9 +104,7 @@ class TestHandleEvent:
         accumulator = SegmentAccumulator(broadcaster)
         session = _make_session()
 
-        await accumulator.handle_event(
-            session, {"type": "recognized", "text": "そのまま"}
-        )
+        await accumulator.handle_event(session, RecognizedEvent(text="そのまま"))
 
         assert session.segments[0].text == "そのまま"
 
@@ -121,9 +114,9 @@ class TestDrain:
         broadcaster = SSEBroadcaster()
         accumulator = SegmentAccumulator(broadcaster)
         session = _make_session()
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-        queue.put_nowait({"type": "recognized", "text": "ドレイン"})
-        queue.put_nowait({"type": "interim", "text": "中間は無視"})
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
+        queue.put_nowait(RecognizedEvent(text="ドレイン"))
+        queue.put_nowait(InterimEvent(text="中間は無視"))
 
         await accumulator.drain(session, queue)
 
@@ -135,7 +128,7 @@ class TestDrain:
         broadcaster = SSEBroadcaster()
         accumulator = SegmentAccumulator(broadcaster)
         session = _make_session()
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
 
         await accumulator.drain(session, queue)
 

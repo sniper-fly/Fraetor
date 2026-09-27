@@ -44,8 +44,14 @@ from src.shared.config.secrets_loader import Secrets, load_secrets
 from src.shared.config.settings import load_settings
 from src.shared.herdr.socket_client import HerdrSocketClient
 from src.shared.process.signal_process_shutdowner import ProcessShutdowner
+from src.transcript_history.application.dictation_finalization_adapter import (
+    DictationSessionFinalizationAdapter,
+)
 from src.transcript_history.application.finalize_session_use_case import (
     FinalizeSessionUseCase,
+)
+from src.transcript_history.application.pending_session_store import (
+    PendingSessionStore,
 )
 from src.transcript_history.infrastructure.jsonl_history_repository import (
     JsonlHistoryRepository,
@@ -99,6 +105,25 @@ def _segment_silence_sec_fn(
     「次のセッションから反映」を成立させる。
     """
     return lambda: settings_repository.get().segment_silence_sec
+
+
+def _dynamic_float_fn(
+    settings_repository: SettingsRepositoryPort, attr: str
+) -> Callable[[], float]:
+    """`DynamicSettings` の指定属性 (float) を都度読む callable を返す。
+
+    `_segment_silence_sec_fn` と同じ「呼び出し時に評価する」パターンの
+    汎用版。dictation ライブラリがFraetor固有の `DynamicSettings` を
+    知らずに済むよう、`Callable[[], float]` に変換してから渡す。
+    """
+    return lambda: getattr(settings_repository.get(), attr)
+
+
+def _dynamic_str_fn(
+    settings_repository: SettingsRepositoryPort, attr: str
+) -> Callable[[], str]:
+    """`DynamicSettings` の指定属性 (str) を都度読む callable を返す。"""
+    return lambda: getattr(settings_repository.get(), attr)
 
 
 def _create_proofreader(
@@ -179,16 +204,29 @@ class Container(containers.DeclarativeContainer):
     # から読む。DI 配線時に値が固定されると設定画面の変更が反映されない。
     stt_engine_factory = providers.Factory(
         create_stt_engine,
-        settings_repository=settings_repository,
         endpoint=secrets.provided.mai_endpoint,
         api_key=secrets.provided.mai_api_key,
         sample_rate=settings.provided.stt_sample_rate,
+        locale_fn=providers.Callable(
+            _dynamic_str_fn, settings_repository, "mai_locale"
+        ),
+        model_name_fn=providers.Callable(
+            _dynamic_str_fn, settings_repository, "mai_model_name"
+        ),
+        transcribe_style_fn=providers.Callable(
+            _dynamic_str_fn, settings_repository, "mai_transcribe_style"
+        ),
+        timeout_sec_fn=providers.Callable(
+            _dynamic_float_fn, settings_repository, "mai_timeout_sec"
+        ),
     ).provider
 
     vad_factory = providers.Factory(
         create_vad,
-        settings_repository=settings_repository,
         sample_rate=settings.provided.stt_sample_rate,
+        threshold_fn=providers.Callable(
+            _dynamic_float_fn, settings_repository, "vad_threshold"
+        ),
     ).provider
 
     screenshot_capture = providers.Singleton(MssScreenshotCapturer)
@@ -241,8 +279,17 @@ class Container(containers.DeclarativeContainer):
         SttEventRelay, app_state=app_state, accumulator=segment_accumulator
     )
 
+    pending_session_store = providers.Singleton(PendingSessionStore)
+
+    dictation_finalization_adapter = providers.Singleton(
+        DictationSessionFinalizationAdapter, pending_store=pending_session_store
+    )
+
     transcription_queue = providers.Singleton(
-        TranscriptionQueue, app_state=app_state, accumulator=segment_accumulator
+        TranscriptionQueue,
+        app_state=app_state,
+        accumulator=segment_accumulator,
+        finalization_hook=dictation_finalization_adapter,
     )
 
     recording_session_service = providers.Singleton(
@@ -251,7 +298,12 @@ class Container(containers.DeclarativeContainer):
         audio_pipeline=audio_pipeline_coordinator,
         event_relay=stt_event_relay,
         transcription_queue=transcription_queue,
-        settings_repository=settings_repository,
+        max_session_duration_sec_fn=providers.Callable(
+            _dynamic_float_fn, settings_repository, "max_session_duration_sec"
+        ),
+        silence_timeout_sec_fn=providers.Callable(
+            _dynamic_float_fn, settings_repository, "silence_timeout_sec"
+        ),
     )
 
     history_repository = providers.Singleton(

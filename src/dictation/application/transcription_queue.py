@@ -6,12 +6,11 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from src.transcript_history.domain.models import FinalizedSession
-
 if TYPE_CHECKING:
     from src.dictation.application.app_state import AppState
     from src.dictation.application.segment_accumulator import SegmentAccumulator
     from src.dictation.domain.models import TranscriptionJob
+    from src.dictation.domain.ports import SessionFinalizationHookPort
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +25,15 @@ class TranscriptionQueue:
     崩れないようにしている (FIFO順でtextareaに追記するA案の前提)。
     """
 
-    def __init__(self, app_state: AppState, accumulator: SegmentAccumulator) -> None:
+    def __init__(
+        self,
+        app_state: AppState,
+        accumulator: SegmentAccumulator,
+        finalization_hook: SessionFinalizationHookPort,
+    ) -> None:
         self._app_state = app_state
         self._accumulator = accumulator
+        self._finalization_hook = finalization_hook
         self._queue: asyncio.Queue[TranscriptionJob] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
 
@@ -67,20 +72,25 @@ class TranscriptionQueue:
 
         await self._accumulator.drain(job.session, job.event_queue)
 
-        finalized = FinalizedSession.from_recording(
-            job.session, ended_at=datetime.now(tz=UTC), timed_out=job.timed_out
-        )
-        self._app_state.add_pending_session(finalized)
+        ended_at = datetime.now(tz=UTC)
+        try:
+            await self._finalization_hook.on_session_finalized(
+                job.session, ended_at=ended_at, timed_out=job.timed_out
+            )
+        except Exception:
+            logger.exception(
+                "SessionFinalizationHookPort failed: session=%s", session_id
+            )
 
         await self._app_state.broadcaster.broadcast(
-            "session_end", {"session_id": finalized.id}
+            "session_end", {"session_id": session_id}
         )
 
         logger.info(
             "Session transcribed: %s (timed_out=%s, segments=%d)",
-            finalized.id,
+            session_id,
             job.timed_out,
-            len(finalized.segments),
+            len(job.session.segments),
         )
 
     async def shutdown(self, timeout: float) -> None:

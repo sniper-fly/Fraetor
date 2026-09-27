@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from src.dictation.domain.events import InterimEvent
 from src.dictation.domain.models import Segment
 
 if TYPE_CHECKING:
+    from src.dictation.domain.events import SttEvent
     from src.dictation.domain.models import RecordingSession
     from src.dictation.domain.ports import (
         EventBroadcasterPort,
@@ -30,17 +32,17 @@ class SegmentAccumulator:
         self._text_transform = text_transform
 
     async def handle_event(
-        self, session: RecordingSession | None, event: dict[str, str]
+        self, session: RecordingSession | None, event: SttEvent
     ) -> None:
-        if event["type"] == "interim":
+        if isinstance(event, InterimEvent):
             session_id = session.id if session is not None else None
             await self._broadcaster.broadcast(
-                "interim", {"session_id": session_id, "text": event["text"]}
+                "interim", {"session_id": session_id, "text": event.text}
             )
-        elif event["type"] == "recognized":
+        else:
             if session is None:
                 return
-            text = event["text"]
+            text = event.text
             if self._text_transform is not None:
                 text = await self._text_transform.transform(session.id, text)
             segment = Segment(id=len(session.segments), text=text)
@@ -57,7 +59,7 @@ class SegmentAccumulator:
     async def drain(
         self,
         session: RecordingSession | None,
-        queue: asyncio.Queue[dict[str, str]],
+        queue: asyncio.Queue[SttEvent],
     ) -> None:
         """キューに残ったイベントをすべて処理する。"""
         while not queue.empty():

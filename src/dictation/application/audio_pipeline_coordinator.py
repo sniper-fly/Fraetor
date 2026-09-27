@@ -9,6 +9,7 @@ from src.dictation.application.segment_silence_monitor import SegmentSilenceMoni
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from src.dictation.domain.events import SttEvent
     from src.dictation.domain.ports import (
         AudioCapturePort,
         SegmentLifecycleHookPort,
@@ -43,7 +44,7 @@ class AudioPipelineCoordinator:
     def __init__(
         self,
         audio_capture: AudioCapturePort,
-        stt_engine_factory: Callable[[asyncio.Queue[dict[str, str]]], SttEnginePort],
+        stt_engine_factory: Callable[[asyncio.Queue[SttEvent]], SttEnginePort],
         vad_factory: Callable[[], SpeechActivityDetectorPort],
         segment_silence_sec_fn: Callable[[], float],
         segment_lifecycle_hook: SegmentLifecycleHookPort | None = None,
@@ -54,7 +55,7 @@ class AudioPipelineCoordinator:
         self._segment_silence_sec_fn = segment_silence_sec_fn
         self._segment_lifecycle_hook = segment_lifecycle_hook
         self._stt_client: SttEnginePort | None = None
-        self._event_queue: asyncio.Queue[dict[str, str]] | None = None
+        self._event_queue: asyncio.Queue[SttEvent] | None = None
         self._vad: SpeechActivityDetectorPort | None = None
         self._session_start_time: float = time.monotonic()
         self._segment_monitor: SegmentSilenceMonitor | None = None
@@ -74,7 +75,7 @@ class AudioPipelineCoordinator:
         return self._stt_client
 
     @property
-    def event_queue(self) -> asyncio.Queue[dict[str, str]] | None:
+    def event_queue(self) -> asyncio.Queue[SttEvent] | None:
         return self._event_queue
 
     def last_speech_time(self) -> float:
@@ -113,7 +114,7 @@ class AudioPipelineCoordinator:
         )
         self._segment_monitor.start()
 
-    async def stop(self) -> tuple[SttEnginePort, asyncio.Queue[dict[str, str]]] | None:
+    async def stop(self) -> tuple[SttEnginePort, asyncio.Queue[SttEvent]] | None:
         """録音を停止し、STTクライアントと専用イベントキューの所有権を返す。
 
         STT の stop() (文字起こし本体、重い処理) はここでは呼ばない。

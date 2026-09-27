@@ -10,13 +10,14 @@ from src.dictation.application.session_timeout_monitor import SessionTimeoutMoni
 from src.dictation.domain.models import RecordingSession, TranscriptionJob
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.dictation.application.app_state import AppState
     from src.dictation.application.audio_pipeline_coordinator import (
         AudioPipelineCoordinator,
     )
     from src.dictation.application.stt_event_relay import SttEventRelay
     from src.dictation.application.transcription_queue import TranscriptionQueue
-    from src.shared.config.ports import SettingsRepositoryPort
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +39,15 @@ class RecordingSessionService:
         event_relay: SttEventRelay,
         transcription_queue: TranscriptionQueue,
         *,
-        settings_repository: SettingsRepositoryPort,
+        max_session_duration_sec_fn: Callable[[], float],
+        silence_timeout_sec_fn: Callable[[], float],
     ) -> None:
         self._app_state = app_state
         self._audio_pipeline = audio_pipeline
         self._event_relay = event_relay
         self._transcription_queue = transcription_queue
-        self._settings_repository = settings_repository
+        self._max_session_duration_sec_fn = max_session_duration_sec_fn
+        self._silence_timeout_sec_fn = silence_timeout_sec_fn
         self._lock = asyncio.Lock()
         self._timeout_monitor: SessionTimeoutMonitor | None = None
 
@@ -84,10 +87,9 @@ class RecordingSessionService:
             # タイムアウト値はセッション開始のたびに読む (設定画面からの
             # 変更を次のセッションから反映するため)。監視中の値の差し替えは
             # 行わない。
-            settings = self._settings_repository.get()
             self._timeout_monitor = SessionTimeoutMonitor(
-                max_duration_sec=settings.max_session_duration_sec,
-                silence_timeout_sec=settings.silence_timeout_sec,
+                max_duration_sec=self._max_session_duration_sec_fn(),
+                silence_timeout_sec=self._silence_timeout_sec_fn(),
                 last_speech_time_fn=self._audio_pipeline.last_speech_time,
                 on_timeout=self._on_timeout,
             )

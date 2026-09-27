@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from src.dictation.domain.events import SttEvent
 from src.dictation.domain.ports import SttEnginePort
 
 
@@ -36,5 +37,5 @@ class TranscriptionJob(BaseModel):
 
     session: RecordingSession
     stt_client: SttEnginePort
-    event_queue: asyncio.Queue[dict[str, str]]
+    event_queue: asyncio.Queue[SttEvent]
     timed_out: bool

@@ -8,6 +8,10 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     import asyncio
     from collections.abc import Callable
+    from datetime import datetime
+
+    from src.dictation.domain.events import SttEvent
+    from src.dictation.domain.models import RecordingSession
 
 
 class AudioCapturePort(ABC):
@@ -40,11 +44,11 @@ class SttEnginePort(ABC):
     """音声認識エンジンの抽象ポート。
 
     feed_audio で 16kHz/16bit/mono の PCM バイトを受け取り、
-    認識結果は stt_event_queue に
-    {"type": "interim"|"recognized", "text": ...} を投入する。
+    認識結果は stt_event_queue に `SttEvent` (`InterimEvent`/`RecognizedEvent`)
+    を投入する。
     """
 
-    def __init__(self, stt_event_queue: asyncio.Queue[dict[str, str]]) -> None:
+    def __init__(self, stt_event_queue: asyncio.Queue[SttEvent]) -> None:
         self._queue = stt_event_queue
 
     @property
@@ -128,6 +132,25 @@ class RecognizedTextTransformPort(ABC):
     @abstractmethod
     async def transform(self, session_id: str, text: str) -> str:
         """テキストを必要に応じて変換して返す。変換不要/失敗時は元のテキストを返す。"""
+
+
+class SessionFinalizationHookPort(ABC):
+    """録音停止後の文字起こし完了(セッション確定)時に呼ばれるフック。
+
+    dictationは`RecordingSession`をそのまま渡すのみで、永続化・履歴化・
+    不変レコードへの変換は関知しない(依存性逆転)。
+    """
+
+    @abstractmethod
+    async def on_session_finalized(
+        self, session: RecordingSession, *, ended_at: datetime, timed_out: bool
+    ) -> None:
+        """文字起こし完了直後(SSE `session_end` 配信の前)に呼ばれる。
+
+        呼び出し中の例外は`TranscriptionQueue`が握り潰し、ログに記録して
+        処理を継続する(1セッションの確定失敗が他セッションの処理を
+        止めないため)。
+        """
 
 
 class EventBroadcasterPort(ABC):

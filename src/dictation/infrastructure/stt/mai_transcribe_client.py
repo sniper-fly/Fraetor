@@ -5,6 +5,7 @@ import io
 import logging
 import threading
 import wave
+from typing import TYPE_CHECKING
 
 from azure.ai.transcription import TranscriptionClient
 from azure.ai.transcription.models import (
@@ -14,7 +15,11 @@ from azure.ai.transcription.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
+from src.dictation.domain.events import RecognizedEvent
 from src.dictation.domain.ports import SttCapabilities, SttEnginePort
+
+if TYPE_CHECKING:
+    from src.dictation.domain.events import SttEvent
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +45,7 @@ class MaiTranscribeClient(SttEnginePort):
 
     def __init__(
         self,
-        stt_event_queue: asyncio.Queue[dict[str, str]],
+        stt_event_queue: asyncio.Queue[SttEvent],
         *,
         endpoint: str,
         api_key: str,
@@ -118,7 +123,7 @@ class MaiTranscribeClient(SttEnginePort):
             logger.exception("MAI Transcribe %s failed", phase)
             return ""
         if text:
-            self._queue.put_nowait({"type": "recognized", "text": text})
+            self._queue.put_nowait(RecognizedEvent(text=text))
         return text
 
     def _extract_pending_wav(self, trim_before_sample: int | None) -> bytes:

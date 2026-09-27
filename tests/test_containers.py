@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from src.containers import Container
+from src.containers import Container, _dynamic_float_fn, _dynamic_str_fn
 from src.dictation.application.audio_pipeline_coordinator import (
     AudioPipelineCoordinator,
 )
@@ -19,6 +19,7 @@ from src.transcript_history.application.finalize_session_use_case import (
 from src.transcript_history.infrastructure.jsonl_history_repository import (
     JsonlHistoryRepository,
 )
+from tests.fakes import InMemorySettingsRepository
 
 if TYPE_CHECKING:
     import pytest
@@ -155,10 +156,12 @@ class TestSettingsRepositoryWiring:
 
     def test_recording_session_service_receives_repository(self) -> None:
         container = Container()
-
+        repo = container.settings_repository()
         service = container.recording_session_service()
 
-        assert service._settings_repository is container.settings_repository()
+        repo.update(DynamicSettings(max_session_duration_sec=42.0))
+
+        assert service._max_session_duration_sec_fn() == 42.0
 
     def test_proofread_use_case_receives_repository(self) -> None:
         container = Container()
@@ -193,3 +196,39 @@ class TestSettingsRepositoryWiring:
         repo.update(DynamicSettings(segment_silence_sec=1.5))
 
         assert coordinator._segment_silence_sec_fn() == 1.5
+
+
+class TestDynamicSettingsFn:
+    def test_dynamic_float_fn_reads_attribute_at_call_time(self) -> None:
+        repo = InMemorySettingsRepository(DynamicSettings(vad_threshold=0.3))
+        fn = _dynamic_float_fn(repo, "vad_threshold")
+
+        repo.update(DynamicSettings(vad_threshold=0.9))
+
+        assert fn() == 0.9
+
+    def test_dynamic_str_fn_reads_attribute_at_call_time(self) -> None:
+        repo = InMemorySettingsRepository(DynamicSettings(mai_locale="ja"))
+        fn = _dynamic_str_fn(repo, "mai_locale")
+
+        repo.update(DynamicSettings(mai_locale="en"))
+
+        assert fn() == "en"
+
+
+class TestTranscriptionQueueWiring:
+    def test_receives_dictation_finalization_adapter(self) -> None:
+        container = Container()
+
+        queue = container.transcription_queue()
+
+        assert queue._finalization_hook is container.dictation_finalization_adapter()
+
+    def test_dictation_finalization_adapter_shares_pending_session_store(
+        self,
+    ) -> None:
+        container = Container()
+
+        adapter = container.dictation_finalization_adapter()
+
+        assert adapter._pending_store is container.pending_session_store()

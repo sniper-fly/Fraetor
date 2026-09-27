@@ -13,7 +13,7 @@ from src.dictation.domain.ports import SttCapabilities, SttEnginePort
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 from src.presentation.routes.shutdown_routes import shutdown as shutdown_handler
 from src.shared.config.dynamic_settings import DynamicSettings
-from tests.fakes import InMemorySettingsRepository
+from tests.fakes import InMemorySettingsRepository, NoOpSessionFinalizationHook
 
 if TYPE_CHECKING:
     from starlette.testclient import TestClient
@@ -87,7 +87,9 @@ class TestShutdownWaitsForTranscriptionQueue:
         broadcaster = SSEBroadcaster()
         app_state = AppState(broadcaster=broadcaster)
         accumulator = SegmentAccumulator(broadcaster)
-        transcription_queue = TranscriptionQueue(app_state, accumulator)
+        transcription_queue = TranscriptionQueue(
+            app_state, accumulator, NoOpSessionFinalizationHook()
+        )
         transcription_queue.start()
         sub = broadcaster.subscribe()
 

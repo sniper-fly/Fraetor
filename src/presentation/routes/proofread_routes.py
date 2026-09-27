@@ -11,12 +11,14 @@ from src.presentation.schemas.request_models import (
 )
 
 if TYPE_CHECKING:
-    from src.dictation.application.app_state import AppState
     from src.proofreading.application.proofread_text_use_case import (
         ProofreadTextUseCase,
     )
     from src.transcript_history.application.finalize_session_use_case import (
         FinalizeSessionUseCase,
+    )
+    from src.transcript_history.application.pending_session_store import (
+        PendingSessionStore,
     )
 
 logger = logging.getLogger(__name__)
@@ -33,9 +35,9 @@ async def proofread_text(request: Request) -> dict[str, object]:
 
 @router.post("/api/finalize-session")
 async def finalize_session(request: Request) -> dict[str, bool]:
-    app_state: AppState = request.app.state.app_state
+    pending_session_store: PendingSessionStore = request.app.state.pending_session_store
     body = FinalizeSessionRequest.model_validate(await request.json())
-    pending = app_state.pop_pending_session(body.session_id)
+    pending = pending_session_store.pop(body.session_id)
     if pending is None:
         return {"ok": False}
     use_case: FinalizeSessionUseCase = request.app.state.finalize_session_use_case

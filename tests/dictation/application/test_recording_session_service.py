@@ -16,10 +16,10 @@ from src.dictation.application.recording_session_service import (
 from src.dictation.application.segment_accumulator import SegmentAccumulator
 from src.dictation.application.stt_event_relay import SttEventRelay
 from src.dictation.application.transcription_queue import TranscriptionQueue
+from src.dictation.domain.events import RecognizedEvent
 from src.dictation.domain.ports import SttCapabilities, SttEnginePort
 from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
-from src.shared.config.dynamic_settings import DynamicSettings
-from tests.fakes import InMemorySettingsRepository
+from tests.fakes import NoOpSessionFinalizationHook
 
 _MAX_DURATION_SEC = 600
 _SILENCE_TIMEOUT_SEC = 120
@@ -37,7 +37,7 @@ def _make_service(
     AppState,
     MagicMock,
     TranscriptionQueue,
-    InMemorySettingsRepository,
+    NoOpSessionFinalizationHook,
 ]:
     app_state = AppState(broadcaster=SSEBroadcaster())
 
@@ -63,29 +63,28 @@ def _make_service(
     )
     accumulator = SegmentAccumulator(app_state.broadcaster)
     event_relay = SttEventRelay(app_state, accumulator)
-    transcription_queue = TranscriptionQueue(app_state, accumulator)
+    hook = NoOpSessionFinalizationHook()
+    transcription_queue = TranscriptionQueue(app_state, accumulator, hook)
     transcription_queue.start()
-    settings_repository = InMemorySettingsRepository(
-        DynamicSettings(
-            max_session_duration_sec=max_duration_sec,
-            silence_timeout_sec=silence_timeout_sec,
-            segment_silence_sec=min(3.0, silence_timeout_sec / 2),
-        )
-    )
+    silence_sec_holder = {"value": silence_timeout_sec}
+    duration_sec_holder = {"value": max_duration_sec}
     service = RecordingSessionService(
         app_state,
         audio_pipeline,
         event_relay,
         transcription_queue,
-        settings_repository=settings_repository,
+        max_session_duration_sec_fn=lambda: duration_sec_holder["value"],
+        silence_timeout_sec_fn=lambda: silence_sec_holder["value"],
     )
-    return service, app_state, mock_stt, transcription_queue, settings_repository
+    service._duration_sec_holder = duration_sec_holder  # type: ignore[attr-defined]
+    service._silence_sec_holder = silence_sec_holder  # type: ignore[attr-defined]
+    return service, app_state, mock_stt, transcription_queue, hook
 
 
 class TestStartSession:
     async def test_creates_session_with_correct_fields(self) -> None:
         """セッション開始 → RecordingSession 作成"""
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
 
         await service.start_session()
 
@@ -98,7 +97,7 @@ class TestStartSession:
         await queue.shutdown(timeout=1)
 
     async def test_broadcasts_recording_started(self) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
         sub = app_state.broadcaster.subscribe()
 
         await service.start_session()
@@ -111,7 +110,7 @@ class TestStartSession:
         await queue.shutdown(timeout=1)
 
     async def test_ignores_start_when_already_recording(self) -> None:
-        service, _, mock_stt, queue, _repo = _make_service()
+        service, _, mock_stt, queue, _hook = _make_service()
         await service.start_session()
         mock_stt.start.reset_mock()
 
@@ -123,7 +122,7 @@ class TestStartSession:
         await queue.shutdown(timeout=1)
 
     async def test_records_target_pane_id_when_herdr_requested(self) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
 
         await service.start_session(target_pane_id="w1:p1", herdr_requested=True)
 
@@ -135,7 +134,7 @@ class TestStartSession:
         await queue.shutdown(timeout=1)
 
     async def test_broadcasts_target_pane_id_and_herdr_requested(self) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
         sub = app_state.broadcaster.subscribe()
 
         await service.start_session(
@@ -158,7 +157,7 @@ class TestStartSession:
 
         target_pane_id/herdr_requestedは既定値のままになる。
         """
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
         sub = app_state.broadcaster.subscribe()
 
         await service.start_session()
@@ -176,7 +175,7 @@ class TestStartSession:
 class TestStopSession:
     async def test_stops_recording_immediately_without_waiting_for_stt(self) -> None:
         """stop_sessionはSTT完了を待たず即座に返る"""
-        service, app_state, mock_stt, queue, _repo = _make_service(post_processing=True)
+        service, app_state, mock_stt, queue, _hook = _make_service(post_processing=True)
         await service.start_session()
         stt_stop_proceed = asyncio.Event()
 
@@ -194,7 +193,7 @@ class TestStopSession:
         await queue.shutdown(timeout=1)
 
     async def test_stop_when_not_recording_is_noop(self) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
 
         await service.stop_session()
 
@@ -202,7 +201,7 @@ class TestStopSession:
         await queue.shutdown(timeout=1)
 
     async def test_broadcasts_status_recording_false(self) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
         await service.start_session()
         sub = app_state.broadcaster.subscribe()
 
@@ -220,7 +219,7 @@ class TestStopSession:
         await queue.shutdown(timeout=1)
 
     async def test_broadcasts_session_id_and_herdr_send_confirmed_on_stop(self) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, _hook = _make_service()
         await service.start_session()
         session_id = app_state.current_session.id  # type: ignore[union-attr]
         sub = app_state.broadcaster.subscribe()
@@ -238,40 +237,40 @@ class TestStopSession:
         await queue.shutdown(timeout=1)
 
     async def test_timed_out_flag_reaches_finalized_session(self) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, _app_state, _, queue, hook = _make_service()
         await service.start_session()
 
         await service.stop_session(timed_out=True)
         await queue.shutdown(timeout=1)
 
-        assert app_state.pending_sessions[-1].timed_out is True
+        assert hook.calls[-1][2] is True
 
     async def test_enqueues_transcription_job_on_stop(self) -> None:
         """停止時に文字起こしジョブがキューに投入され、非同期に処理される"""
-        service, app_state, _, queue, _repo = _make_service()
+        service, app_state, _, queue, hook = _make_service()
         await service.start_session()
 
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
-        assert len(app_state.pending_sessions) == 1
+        assert len(hook.calls) == 1
         assert app_state.current_session is None
 
     async def test_recognized_events_reach_pending_session_after_queue_processing(
         self,
     ) -> None:
-        service, app_state, _, queue, _repo = _make_service()
+        service, _app_state, _, queue, hook = _make_service()
         await service.start_session()
 
         event_queue = service._audio_pipeline.event_queue
         assert event_queue is not None
-        event_queue.put_nowait({"type": "recognized", "text": "テスト"})
+        event_queue.put_nowait(RecognizedEvent(text="テスト"))
         await asyncio.sleep(0.05)
 
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
-        assert app_state.pending_sessions[-1].full_text == "テスト"
+        assert hook.calls[-1][0].full_text == "テスト"
 
     async def test_stop_waits_for_in_flight_flush_before_enqueueing(self) -> None:
         """無音区切りのflushが進行中にstop_sessionが呼ばれても、flushの
@@ -282,7 +281,7 @@ class TestStopSession:
         欠落する (`AudioPipelineCoordinator.stop()`の`_flush_lock`待ちが、
         `RecordingSessionService`経由の統合フローでも効いているかの検証)。
         """
-        service, app_state, mock_stt, queue, _repo = _make_service()
+        service, _app_state, mock_stt, queue, hook = _make_service()
         await service.start_session()
 
         event_queue = service._audio_pipeline.event_queue
@@ -290,7 +289,7 @@ class TestStopSession:
 
         async def slow_flush(*, trim_before_sample: int | None) -> None:
             await asyncio.sleep(0.05)
-            event_queue.put_nowait({"type": "recognized", "text": "発話1"})
+            event_queue.put_nowait(RecognizedEvent(text="発話1"))
 
         mock_stt.flush = AsyncMock(side_effect=slow_flush)
 
@@ -302,7 +301,7 @@ class TestStopSession:
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
-        assert app_state.pending_sessions[-1].full_text == "発話1", (
+        assert hook.calls[-1][0].full_text == "発話1", (
             "flush完了を待たずにenqueueすると、drain()がこのテキストを取りこぼす"
         )
         await flush_task
@@ -311,19 +310,19 @@ class TestStopSession:
 class TestSttEventProcessing:
     async def test_full_text_assembled_from_segments(self) -> None:
         """全セグメントのテキスト結合"""
-        service, app_state, _, queue, _repo = _make_service()
+        service, _app_state, _, queue, hook = _make_service()
         await service.start_session()
 
         event_queue = service._audio_pipeline.event_queue
         assert event_queue is not None
-        event_queue.put_nowait({"type": "recognized", "text": "こんにちは。"})
-        event_queue.put_nowait({"type": "recognized", "text": "お元気ですか。"})
+        event_queue.put_nowait(RecognizedEvent(text="こんにちは。"))
+        event_queue.put_nowait(RecognizedEvent(text="お元気ですか。"))
         await asyncio.sleep(0.05)
 
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
-        assert app_state.pending_sessions[-1].full_text == "こんにちは。お元気ですか。"
+        assert hook.calls[-1][0].full_text == "こんにちは。お元気ですか。"
 
 
 class TestIncrementalSegments:
@@ -337,7 +336,7 @@ class TestIncrementalSegments:
         self,
     ) -> None:
         """録音中の flush 結果が、到着順にセグメントとして追記・配信される。"""
-        service, app_state, _stt, queue, _repo = _make_service()
+        service, app_state, _stt, queue, hook = _make_service()
         recognized: list[dict[str, object]] = []
         subscriber = app_state.broadcaster.subscribe()
         await service.start_session()
@@ -347,7 +346,7 @@ class TestIncrementalSegments:
         # flush が recognized を投入する状況を再現する (STT 側の送信は
         # tests/.../test_mai_transcribe_client.py で検証済み)
         for text in ("1つ目。", "2つ目。", "3つ目。"):
-            event_queue.put_nowait({"type": "recognized", "text": text})
+            event_queue.put_nowait(RecognizedEvent(text=text))
             await asyncio.sleep(0.01)
 
         session = app_state.current_session
@@ -367,7 +366,7 @@ class TestIncrementalSegments:
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
-        assert app_state.pending_sessions[-1].full_text == "1つ目。2つ目。3つ目。"
+        assert hook.calls[-1][0].full_text == "1つ目。2つ目。3つ目。"
 
     async def test_concurrent_flushes_preserve_order_end_to_end(self) -> None:
         """発話1(処理が遅いflush)の最中に発話2の無音区切りが来ても、
@@ -379,7 +378,7 @@ class TestIncrementalSegments:
         最終的なfull_text/セグメント順序が「後から終わった短い発話が先に
         確定する」形で崩れないことを確認する。
         """
-        service, app_state, mock_stt, queue, _repo = _make_service()
+        service, app_state, mock_stt, queue, hook = _make_service()
         await service.start_session()
 
         event_queue = service._audio_pipeline.event_queue
@@ -393,10 +392,10 @@ class TestIncrementalSegments:
             if call_count == 1:
                 # 発話1: 処理(HTTP応答)が遅い長い発話を想定
                 await asyncio.sleep(0.05)
-                event_queue.put_nowait({"type": "recognized", "text": "発話1"})
+                event_queue.put_nowait(RecognizedEvent(text="発話1"))
                 return "発話1"
             # 発話2: 即座に応答が返る短い発話を想定
-            event_queue.put_nowait({"type": "recognized", "text": "発話2"})
+            event_queue.put_nowait(RecognizedEvent(text="発話2"))
             return "発話2"
 
         mock_stt.flush = AsyncMock(side_effect=flush)
@@ -421,7 +420,7 @@ class TestIncrementalSegments:
 
         await service.stop_session()
         await queue.shutdown(timeout=1)
-        assert app_state.pending_sessions[-1].full_text == "発話1発話2"
+        assert hook.calls[-1][0].full_text == "発話1発話2"
 
 
 class TestSessionTimeout:
@@ -431,7 +430,7 @@ class TestSessionTimeout:
 
     async def test_auto_stops_after_max_duration(self) -> None:
         """最大セッション時間経過 → 超過時は自動で録音停止"""
-        service, app_state, mock_stt, queue, _repo = _make_service(
+        service, app_state, mock_stt, queue, _hook = _make_service(
             max_duration_sec=0.05, silence_timeout_sec=10
         )
 
@@ -448,7 +447,7 @@ class TestSessionTimeout:
 
     async def test_auto_stops_after_silence_timeout(self) -> None:
         """発話なしのまま silence_timeout_sec 経過 → 自動で録音停止"""
-        service, app_state, _, queue, _repo = _make_service(
+        service, app_state, _, queue, _hook = _make_service(
             max_duration_sec=10, silence_timeout_sec=0.05
         )
 
@@ -463,24 +462,18 @@ class TestSessionTimeout:
         await queue.shutdown(timeout=1)
 
     async def test_next_session_uses_updated_timeout(self) -> None:
-        """`update()` した値は次の `start_session()` から反映される。
+        """設定変更は次の `start_session()` から反映される。
 
         1回目のセッションは長いタイムアウトで開始し、その間に設定を
         0.05秒へ縮める。1回目は停止せず、停止後に開始した2回目だけが
         新しい値でタイムアウトすることを確認する。
         """
-        service, app_state, _, queue, repo = _make_service(
+        service, app_state, _, queue, _hook = _make_service(
             max_duration_sec=600, silence_timeout_sec=120
         )
         await service.start_session()
 
-        repo.update(
-            DynamicSettings(
-                max_session_duration_sec=0.05,
-                silence_timeout_sec=120,
-                segment_silence_sec=3.0,
-            )
-        )
+        service._duration_sec_holder["value"] = 0.05  # type: ignore[attr-defined]
         await asyncio.sleep(0.15)
         assert app_state.recording is True, "実行中セッションには反映しない"
 
@@ -496,7 +489,7 @@ class TestSessionTimeout:
 class TestSessionStartFailure:
     async def test_stt_failure_aborts_session(self) -> None:
         """STT開始失敗時はセッションを中止する"""
-        service, app_state, _, queue, _repo = _make_service(
+        service, app_state, _, queue, _hook = _make_service(
             stt_start_side_effect=RuntimeError("Auth failed")
         )
 
@@ -508,7 +501,7 @@ class TestSessionStartFailure:
         await queue.shutdown(timeout=1)
 
     async def test_stt_failure_broadcasts_error(self) -> None:
-        service, app_state, _, queue, _repo = _make_service(
+        service, app_state, _, queue, _hook = _make_service(
             stt_start_side_effect=RuntimeError("Auth failed")
         )
         sub = app_state.broadcaster.subscribe()
@@ -526,7 +519,7 @@ class TestSessionStartFailure:
 
     async def test_stream_open_failure_aborts_session(self) -> None:
         """ストリームを開けない場合はセッションを中止する"""
-        service, app_state, _, queue, _repo = _make_service(
+        service, app_state, _, queue, _hook = _make_service(
             audio_start_side_effect=RuntimeError("No audio device")
         )
 
@@ -549,7 +542,7 @@ class TestConcurrentStartStop:
     async def test_start_does_not_wait_for_transcription_to_complete(self) -> None:
         """stop_session中のSTT API呼び出しが長時間かかっても、
         start_sessionは待たされず即座に次のセッションを開始できる。"""
-        service, app_state, mock_stt, queue, _repo = _make_service(post_processing=True)
+        service, app_state, mock_stt, queue, hook = _make_service(post_processing=True)
         await service.start_session()
 
         assert app_state.current_session is not None
@@ -579,7 +572,7 @@ class TestConcurrentStartStop:
         await service.stop_session()
         await queue.shutdown(timeout=1)
 
-        pending_ids = [s.id for s in app_state.pending_sessions]
+        pending_ids = [session.id for session, _, _ in hook.calls]
         assert pending_ids == [first_session_id, second_session_id], (
             "後発(second)が先にキュー投入されても、両セッションが取り違え・"
             "欠落せず投入順(=録音開始順)で残る"
@@ -588,7 +581,7 @@ class TestConcurrentStartStop:
     async def test_three_sessions_queued_while_first_still_processing(self) -> None:
         """1件目がキューで処理中の間に2件目・3件目まで開始/停止しても、
         3セッションとも取り違え・欠落せず投入順で区別されて残る。"""
-        service, app_state, mock_stt, queue, _repo = _make_service(post_processing=True)
+        service, app_state, mock_stt, queue, hook = _make_service(post_processing=True)
 
         stt_stop_entered = asyncio.Event()
         stt_stop_proceed = asyncio.Event()
@@ -618,12 +611,12 @@ class TestConcurrentStartStop:
         stt_stop_proceed.set()
         await queue.shutdown(timeout=1)
 
-        pending_ids = [s.id for s in app_state.pending_sessions]
+        pending_ids = [session.id for session, _, _ in hook.calls]
         assert pending_ids == [first_session_id, second_session_id, third_session_id]
 
     async def test_double_stop_second_call_is_noop(self) -> None:
         """録音していない状態でのstop_sessionは何もしない (冪等)。"""
-        service, _, mock_stt, queue, _repo = _make_service(post_processing=True)
+        service, _, mock_stt, queue, _hook = _make_service(post_processing=True)
         await service.start_session()
 
         mock_stt.stop = AsyncMock()

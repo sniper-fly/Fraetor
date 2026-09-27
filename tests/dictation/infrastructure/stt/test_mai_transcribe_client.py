@@ -5,13 +5,14 @@ import io
 import wave
 from unittest.mock import MagicMock, patch
 
+from src.dictation.domain.events import RecognizedEvent, SttEvent
 from src.dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
 
 _SAMPLE_RATE = 16000
 
 
 def _make_client(
-    queue: asyncio.Queue[dict[str, str]] | None = None,
+    queue: asyncio.Queue[SttEvent] | None = None,
     *,
     transcribe_style: str = "verbatim",
 ) -> tuple[MaiTranscribeClient, MagicMock]:
@@ -108,7 +109,7 @@ class TestFeedAndBuild:
 
 class TestStop:
     async def test_no_audio_skips_transcribe(self) -> None:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         await client.start()
 
@@ -118,7 +119,7 @@ class TestStop:
         assert queue.empty()
 
     async def test_invokes_transcribe_with_locale_and_model(self) -> None:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         result = MagicMock()
         result.combined_phrases = [MagicMock(text="認識結果テキスト")]
@@ -139,7 +140,7 @@ class TestStop:
         }
 
         event = queue.get_nowait()
-        assert event == {"type": "recognized", "text": "認識結果テキスト"}
+        assert event == RecognizedEvent(text="認識結果テキスト")
 
     async def test_invokes_transcribe_with_clean_style(self) -> None:
         """transcribe_style="clean" が modelOptions.transcribeStyle に反映される。"""
@@ -158,7 +159,7 @@ class TestStop:
         }
 
     async def test_empty_text_is_skipped(self) -> None:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         result = MagicMock()
         result.combined_phrases = [MagicMock(text="")]
@@ -171,7 +172,7 @@ class TestStop:
         assert queue.empty()
 
     async def test_no_combined_phrases_is_skipped(self) -> None:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         result = MagicMock()
         result.combined_phrases = []
@@ -184,7 +185,7 @@ class TestStop:
         assert queue.empty()
 
     async def test_transcribe_failure_does_not_raise(self) -> None:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         mock_sdk_client.transcribe.side_effect = RuntimeError("API error")
 
@@ -223,7 +224,7 @@ class TestStop:
 
 class TestFlush:
     async def test_sends_pending_audio_and_queues_recognized(self) -> None:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         _stub_transcribe(mock_sdk_client, "セグメント1")
         await client.start()
@@ -233,7 +234,7 @@ class TestFlush:
 
         assert _sent_frames(mock_sdk_client) == b"\x01\x02\x03\x04"
         assert text == "セグメント1"
-        assert queue.get_nowait() == {"type": "recognized", "text": "セグメント1"}
+        assert queue.get_nowait() == RecognizedEvent(text="セグメント1")
 
     async def test_offset_advances_across_multiple_cycles(self) -> None:
         """feed → flush を繰り返すと、各回で新規追記分だけが送られる。"""
@@ -285,7 +286,7 @@ class TestFlush:
 
     async def test_no_pending_audio_skips_transcribe(self) -> None:
         """送るものがなければ transcribe を呼ばない (無音区間の no-op ガード)。"""
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         await client.start()
 
@@ -312,7 +313,7 @@ class TestFlush:
         失敗分をオフセットに含めないと、以降の全 flush が失敗区間を先頭から
         含み続け、認識済みテキストが重複して追記される。
         """
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         mock_sdk_client.transcribe.side_effect = RuntimeError("API error")
         await client.start()
@@ -330,7 +331,7 @@ class TestFlush:
         assert _sent_frames(mock_sdk_client, 1) == b"\x03\x04"
 
     async def test_empty_text_is_not_queued(self) -> None:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[SttEvent] = asyncio.Queue()
         client, mock_sdk_client = _make_client(queue)
         _stub_transcribe(mock_sdk_client, "")
         await client.start()
