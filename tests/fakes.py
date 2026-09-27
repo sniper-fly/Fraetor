@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.dictation.domain.ports import SessionFinalizationHookPort
+from dictation.domain.ports import SessionFinalizationHookPort
+
 from src.shared.config.dynamic_settings import DynamicSettings
 from src.shared.config.ports import SettingsRepositoryPort
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from src.dictation.domain.models import RecordingSession
+    from dictation.domain.models import RecordingSession
 
 
 class InMemorySettingsRepository(SettingsRepositoryPort):

@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
-from src.dictation.domain.models import Segment
+from dictation.domain.models import Segment
+
 from src.transcript_history.domain.models import FinalizedSession
 
 if TYPE_CHECKING:

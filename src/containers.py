@@ -5,21 +5,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dependency_injector import containers, providers
-
-from src.dictation.application.app_state import AppState
-from src.dictation.application.audio_pipeline_coordinator import (
+from dictation.application.app_state import AppState
+from dictation.application.audio_pipeline_coordinator import (
     AudioPipelineCoordinator,
 )
-from src.dictation.application.recording_session_service import (
+from dictation.application.recording_session_service import (
     RecordingSessionService,
 )
-from src.dictation.application.segment_accumulator import SegmentAccumulator
-from src.dictation.application.stt_event_relay import SttEventRelay
-from src.dictation.application.transcription_queue import TranscriptionQueue
-from src.dictation.infrastructure.audio.factory import create_audio_capture
-from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
-from src.dictation.infrastructure.stt.factory import create_stt_engine
-from src.dictation.infrastructure.vad.factory import create_vad
+from dictation.application.segment_accumulator import SegmentAccumulator
+from dictation.application.stt_event_relay import SttEventRelay
+from dictation.application.transcription_queue import TranscriptionQueue
+from dictation.infrastructure.audio.factory import create_audio_capture
+from dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
+from dictation.infrastructure.stt.factory import create_stt_engine
+from dictation.infrastructure.vad.factory import create_vad
+
 from src.intent_translation.application.dictation_hook_adapter import (
     IntentTranslationDictationAdapter,
 )
@@ -63,7 +63,8 @@ from src.transcript_history.infrastructure.pyperclip_clipboard import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.dictation.domain.ports import AudioCapturePort
+    from dictation.domain.ports import AudioCapturePort
+
     from src.shared.config.ports import SettingsRepositoryPort
     from src.shared.herdr.ports import HerdrClientPort
 

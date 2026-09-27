@@ -16,12 +16,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import responses
+from dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
 
 from src.containers import Container
-from src.dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
 
 if TYPE_CHECKING:
-    from src.dictation.domain.events import SttEvent
+    from dictation.domain.events import SttEvent
 
 _TRANSCRIBE_URL_PATTERN = re.compile(r".*/speechtotext/transcriptions:transcribe.*")
 _SILENCE_PCM = b"\x00\x00" * 1600  # 0.1秒分の無音 (16kHz/16bit/mono)

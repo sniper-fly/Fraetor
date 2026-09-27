@@ -7,10 +7,11 @@ from fastapi import APIRouter, Request
 from src.presentation.schemas.request_models import SendToHerdrRequest
 
 if TYPE_CHECKING:
-    from src.dictation.application.app_state import AppState
-    from src.dictation.application.recording_session_service import (
+    from dictation.application.app_state import AppState
+    from dictation.application.recording_session_service import (
         RecordingSessionService,
     )
+
     from src.shared.herdr.ports import HerdrClientPort
 
 router = APIRouter()

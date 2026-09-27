@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from src.containers import Container, _dynamic_float_fn, _dynamic_str_fn
-from src.dictation.application.audio_pipeline_coordinator import (
+from dictation.application.audio_pipeline_coordinator import (
     AudioPipelineCoordinator,
 )
-from src.dictation.application.recording_session_service import (
+from dictation.application.recording_session_service import (
     RecordingSessionService,
 )
-from src.dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
-from src.dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
+from dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
+from dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
+
+from src.containers import Container, _dynamic_float_fn, _dynamic_str_fn
 from src.shared.config.dynamic_settings import DynamicSettings
 from src.transcript_history.application.finalize_session_use_case import (
     FinalizeSessionUseCase,

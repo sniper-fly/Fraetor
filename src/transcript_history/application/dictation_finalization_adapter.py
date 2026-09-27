@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.dictation.domain.ports import SessionFinalizationHookPort
+from dictation.domain.ports import SessionFinalizationHookPort
+
 from src.transcript_history.domain.models import FinalizedSession
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from src.dictation.domain.models import RecordingSession
+    from dictation.domain.models import RecordingSession
+
     from src.transcript_history.application.pending_session_store import (
         PendingSessionStore,
     )

@@ -9,10 +9,11 @@ from sse_starlette.sse import EventSourceResponse
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from src.dictation.application.app_state import AppState
-    from src.dictation.application.recording_session_service import (
+    from dictation.application.app_state import AppState
+    from dictation.application.recording_session_service import (
         RecordingSessionService,
     )
+
     from src.shared.config.ports import SettingsRepositoryPort
 
 router = APIRouter()

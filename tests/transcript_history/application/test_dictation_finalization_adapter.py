@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from src.dictation.domain.models import RecordingSession, Segment
+from dictation.domain.models import RecordingSession, Segment
+
 from src.transcript_history.application.dictation_finalization_adapter import (
     DictationSessionFinalizationAdapter,
 )

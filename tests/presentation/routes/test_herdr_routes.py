@@ -6,9 +6,8 @@ from unittest.mock import AsyncMock
 from src.shared.herdr.ports import HerdrClientPort, HerdrSessionInfo
 
 if TYPE_CHECKING:
+    from dictation.application.app_state import AppState
     from starlette.testclient import TestClient
-
-    from src.dictation.application.app_state import AppState
 
 
 _DEFAULT_FOCUSED_PANE = HerdrSessionInfo(pane_id="w1:p1", label="Claude Code")

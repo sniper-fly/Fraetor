@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from src.dictation.domain.models import Segment
+from dictation.domain.models import Segment
+
 from src.transcript_history.application.finalize_session_use_case import (
     FinalizeSessionUseCase,
 )

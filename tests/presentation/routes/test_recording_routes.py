@@ -9,9 +9,8 @@ from src.shared.config.dynamic_settings import DynamicSettings
 from tests.fakes import InMemorySettingsRepository
 
 if TYPE_CHECKING:
+    from dictation.application.app_state import AppState
     from starlette.testclient import TestClient
-
-    from src.dictation.application.app_state import AppState
 
 
 class TestToggleRecording:

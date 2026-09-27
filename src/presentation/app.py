@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
     from contextlib import AbstractAsyncContextManager
 
-    from src.dictation.domain.ports import AudioCapturePort
+    from dictation.domain.ports import AudioCapturePort
 
 logger = logging.getLogger(__name__)
 

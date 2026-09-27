@@ -1,8 +1,7 @@
 from datetime import datetime
 
+from dictation.domain.models import RecordingSession, Segment
 from pydantic import BaseModel, ConfigDict
-
-from src.dictation.domain.models import RecordingSession, Segment
 
 
 class FinalizedSession(BaseModel):

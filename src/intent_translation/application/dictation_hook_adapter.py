@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.dictation.domain.ports import (
+from dictation.domain.ports import (
     RecognizedTextTransformPort,
     SegmentLifecycleHookPort,
 )

@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Request
 
 if TYPE_CHECKING:
-    from src.dictation.application.app_state import AppState
-    from src.dictation.application.recording_session_service import (
+    from dictation.application.app_state import AppState
+    from dictation.application.recording_session_service import (
         RecordingSessionService,
     )
-    from src.dictation.application.transcription_queue import TranscriptionQueue
+    from dictation.application.transcription_queue import TranscriptionQueue
+
     from src.shared.config.ports import SettingsRepositoryPort
     from src.shared.process.ports import ProcessShutdownerPort
 
