@@ -22,6 +22,18 @@ def _isolate_app_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
 
 @pytest.fixture(autouse=True)
+def _isolate_aws_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """実行環境の `AWS_PROFILE` に依存しないようにする。
+
+    `boto3.client()` はプロファイル解決時に `~/.aws/config` を読み、存在しない
+    プロファイル名が環境変数に入っていると `ProfileNotFound` で落ちる。
+    テストは Stubber を使うためプロファイルは不要。
+    """
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_PROFILE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _block_real_aws_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """テスト中の AWS への実 HTTP 通信をブロックする。
 
