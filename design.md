@@ -404,7 +404,9 @@ class TranscriptionJob(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     session: RecordingSession
     stt_client: SttEnginePort  # feed_audio済み・stop()未実行
-    event_queue: asyncio.Queue[dict[str, str]]  # このセッション専用のSTT結果キュー
+    event_queue: asyncio.Queue[
+        SttEvent
+    ]  # このセッション専用のSTT結果キュー (InterimEvent | RecognizedEvent)
     timed_out: bool
 
 
@@ -455,23 +457,24 @@ GEMINI_MODEL = "gemini-3.1-flash-lite-preview"  # 校正用モデル
 ## アーキテクチャ層構成
 
 `src/` は Domain / Application / Infrastructure / Presentation の4層構成を
-取る。境界づけられたコンテキストは単一で、内部を `dictation` (録音・認識・
-タイムアウト) / `transcript_history` (確定履歴CRUD) / `proofreading` (校正)
-の3モジュールに分割し、各モジュール内をレイヤー化する
+取る。境界づけられたコンテキストは単一で、内部を `transcript_history`
+(確定履歴CRUD) / `proofreading` (校正) / `intent_translation` (意図翻訳) の
+モジュールに分割し、各モジュール内をレイヤー化する
 (`shared/` は横断的インフラ、`presentation/` はHTTP層)。
 
-```
-dictation/
-├── domain/            # RecordingSession, Segment, TranscriptionJob, 各種ポート (ABC)
-├── application/        # RecordingSessionService, AudioPipelineCoordinator,
-│                        # SttEventRelay, SegmentAccumulator, TranscriptionQueue,
-│                        # SessionTimeoutMonitor, SegmentSilenceMonitor
-└── infrastructure/     # sounddevice実装, MaiTranscribeClient,
-                         # SileroSpeechActivityDetector, SSEBroadcaster
+録音・認識・タイムアウトを担う `dictation` は外部ライブラリ
+[fraetor-dictation](https://github.com/sniper-fly/fraetor-dictation) に
+切り出した (importパッケージ名は `dictation`)。ライブラリ内部も同じ
+Domain / Application / Infrastructure の3層構成で、Fraetor側からは
+`containers.py` でのみ組み立てる。Fraetor固有の振る舞いは、ライブラリが
+公開するポートを `transcript_history` / `intent_translation` 側のアダプタが
+実装して接続する (下記「dictationライブラリとの接続点」参照)。
 
+```
 transcript_history/
 ├── domain/            # FinalizedSession, HistoryRepositoryPort, ClipboardPort
-├── application/        # FinalizeSessionUseCase
+├── application/        # FinalizeSessionUseCase, PendingSessionStore,
+│                        # DictationSessionFinalizationAdapter
 └── infrastructure/     # JsonlHistoryRepository, PyperclipClipboard
 
 proofreading/
@@ -488,6 +491,21 @@ shared/                 # Settings, Secrets, DynamicSettings +
 
 presentation/           # FastAPIルート・スキーマ (HTTP変換のみ)
 ```
+
+### dictationライブラリとの接続点
+
+`dictation` (外部ライブラリ) はFraetor固有の型を一切参照しない。Fraetor側の
+関心事は、ライブラリが公開するポートをアダプタが実装することで接続する
+(依存性逆転)。`containers.py` のみが両者を知る。
+
+| ライブラリのポート | Fraetor側の実装 | 役割 |
+|---|---|---|
+| `SegmentLifecycleHookPort` / `RecognizedTextTransformPort` | `intent_translation.IntentTranslationDictationAdapter` | 発話区切りの通知・認識テキストの意図翻訳 (任意) |
+| `SessionFinalizationHookPort` | `transcript_history.DictationSessionFinalizationAdapter` | 文字起こし完了時に `FinalizedSession` へ変換し `PendingSessionStore` に積む (必須) |
+
+動的設定 (`DynamicSettings`) はライブラリに渡さず、`containers.py` が
+`Callable[[], T]` (`_dynamic_float_fn`/`_dynamic_str_fn`) に変換して注入する。
+呼び出し時に評価されるため、設定画面の変更は次のセッションから反映される。
 
 依存方向: `Presentation → Application → Domain`、`Infrastructure → Domain`
 (逆方向のimportは禁止)。Domain層はPydantic以外のサードパーティSDKに依存しない。
@@ -525,7 +543,8 @@ Containerから取得したインスタンスを `app.state` に明示的に代�
 - **`TranscriptionQueue`**: 文字起こしジョブをFIFOキュー+単一ワーカーで
   直列処理する。ジョブごとにSTTの`stop()`実行、`processing`/
   `processing_done`/`recognized`/`session_end`のSSE配信 (いずれも
-  `session_id`付き)、`pending_sessions`への追加を行う。
+  `session_id`付き)、`SessionFinalizationHookPort`経由でのセッション確定通知
+  (Fraetorでは`PendingSessionStore`への追加) を行う。
 
 セッション分離 (`session_id`によるクロスセッション分離): 全SSEイベント
 (`status`/`interim`/`recognized`/`processing`/`processing_done`/
@@ -533,9 +552,9 @@ Containerから取得したインスタンスを `app.state` に明示的に代�
 `session_id` ごとに独立した状態を持つブロックを表示し、各ブロックの
 textareaにはそのセッション専用の内容のみが反映される (詳細は
 「セッション管理」章参照)。サーバー側の
-`AppState.pending_sessions` も単一値ではなく `list[FinalizedSession]` で
-保持し、`finalize-session` リクエストの `session_id` で個別に取り出す
-(`pop_pending_session`)。これにより、複数セッションの文字起こしが連続
+確定待ちセッションも単一値ではなく `PendingSessionStore` が
+`list[FinalizedSession]` で保持し、`finalize-session` リクエストの
+`session_id` で個別に取り出す (`PendingSessionStore.pop`)。これにより、複数セッションの文字起こしが連続
 完了しても後発が前発を上書きすることはなく、直列利用・並行利用のいずれでも
 各セッションの結果が個別に完全に保存される。
 
@@ -672,7 +691,7 @@ Herdrクライアント (Socket API通信 + CLI呼び出し) は、`dictation`/
   即座に返り、次の `start_session()` をすぐに受け付けられる
 - 複数セッションが同時に文字起こし完了待ちになる場合の混線
   (クリップボード/履歴の上書き、textareaでの内容混在) は `session_id`
-  によるセッション分離と `pending_sessions` のコレクション化、
+  によるセッション分離と `PendingSessionStore` のコレクション化、
   ブラウザ側の表示キュー (`sessionQueue`) により解消済み (「セッション管理」
   「文字起こしキュー」章参照)
 - キューは無制限長で、滞留数の上限や録音開始の抑制は行わない
