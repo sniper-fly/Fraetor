@@ -388,21 +388,25 @@ Singleton の `AudioPipelineCoordinator` には値ではなく
 # dictation/domain/models.py
 class Segment(BaseModel):
     id: int
-    text: str            # MAI Transcribe の認識結果
+    text: str  # MAI Transcribe の認識結果
+
 
 class RecordingSession(BaseModel):
-    id: str              # UUID
+    id: str  # UUID
     segments: list[Segment] = []
     started_at: datetime
     target_pane_id: str | None = None  # Herdr送信先 (録音開始時に自動取得)
 
+
 class TranscriptionJob(BaseModel):
     """文字起こし待ちの1セッション分のジョブ (TranscriptionQueueが処理)。"""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
     session: RecordingSession
-    stt_client: SttEnginePort          # feed_audio済み・stop()未実行
+    stt_client: SttEnginePort  # feed_audio済み・stop()未実行
     event_queue: asyncio.Queue[dict[str, str]]  # このセッション専用のSTT結果キュー
     timed_out: bool
+
 
 # transcript_history/domain/models.py
 class FinalizedSession(BaseModel):
@@ -411,7 +415,7 @@ class FinalizedSession(BaseModel):
     segments: list[Segment]
     started_at: datetime
     ended_at: datetime
-    timed_out: bool      # セッション時間上限で終了したか
+    timed_out: bool  # セッション時間上限で終了したか
 ```
 
 ## 履歴保存 (JSONL)
@@ -429,22 +433,22 @@ class FinalizedSession(BaseModel):
 
 ```python
 # --- DynamicSettings (~/.voice-input/settings.jsonc、設定タブから変更可能) ---
-max_session_duration_sec = 600       # 最大セッション時間 (10分)
-silence_timeout_sec = 120            # 発話終了からの無音タイムアウト (2分)
-segment_silence_sec = 3.0            # 無音区切り (逐次文字起こし)。上記より小さいこと
-vad_threshold = 0.5                  # 発話判定の閾値 (0.0〜1.0)
-mai_locale = "ja"                    # 認識ロケール
+max_session_duration_sec = 600  # 最大セッション時間 (10分)
+silence_timeout_sec = 120  # 発話終了からの無音タイムアウト (2分)
+segment_silence_sec = 3.0  # 無音区切り (逐次文字起こし)。上記より小さいこと
+vad_threshold = 0.5  # 発話判定の閾値 (0.0〜1.0)
+mai_locale = "ja"  # 認識ロケール
 mai_model_name = "MAI-Transcribe-2"  # 認識モデル (対応モデルのみ選択可)
-mai_transcribe_style = "verbatim"    # 出力スタイル (verbatim=逐語 / clean=フィラー除去)
-mai_timeout_sec = 60                 # 認識APIタイムアウト
-proofread_timeout_sec = 15           # 校正APIタイムアウト
-shutdown_delay_sec = 0.5             # 終了リクエストからプロセス終了までの遅延
-sse_keepalive_sec = 15               # SSEキープアライブ送信間隔
-herdr_slot_count = 4                 # メイン画面に同時表示するブロック数
+mai_transcribe_style = "verbatim"  # 出力スタイル (verbatim=逐語 / clean=フィラー除去)
+mai_timeout_sec = 60  # 認識APIタイムアウト
+proofread_timeout_sec = 15  # 校正APIタイムアウト
+shutdown_delay_sec = 0.5  # 終了リクエストからプロセス終了までの遅延
+sse_keepalive_sec = 15  # SSEキープアライブ送信間隔
+herdr_slot_count = 4  # メイン画面に同時表示するブロック数
 
 # --- Settings (環境変数、変更には再起動が必要) ---
-STT_SAMPLE_RATE = 16000              # 音声サンプルレート
-VERTEX_LOCATION = "global"               # Vertex AI エンドポイント (preview モデルはグローバルのみ)
+STT_SAMPLE_RATE = 16000  # 音声サンプルレート
+VERTEX_LOCATION = "global"  # Vertex AI エンドポイント (preview モデルはグローバルのみ)
 GEMINI_MODEL = "gemini-3.1-flash-lite-preview"  # 校正用モデル
 ```
 

@@ -96,10 +96,12 @@ config = types.LiveConnectConfig(
     response_modalities=[types.Modality.AUDIO],
     system_instruction=types.Content(
         parts=[types.Part(text="You are a helpful assistant.")]
-    )
+    ),
 )
 
-async with client.aio.live.connect(model="gemini-3.1-flash-live-preview", config=config) as session:
+async with client.aio.live.connect(
+    model="gemini-3.1-flash-live-preview", config=config
+) as session:
     pass  # Session is active
 ```
 
@@ -153,9 +155,7 @@ session.sendRealtimeInput({
 #### Python
 ```python
 # frame: raw JPEG-encoded bytes
-await session.send_realtime_input(
-    video=types.Blob(data=frame, mime_type="image/jpeg")
-)
+await session.send_realtime_input(video=types.Blob(data=frame, mime_type="image/jpeg"))
 ```
 
 #### JavaScript

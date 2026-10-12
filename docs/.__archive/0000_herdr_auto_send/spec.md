@@ -79,9 +79,11 @@ Herdrクライアント (Socket API通信 + CLI呼び出し) は、既存の3境
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
 
+
 class HerdrSessionInfo(BaseModel):
     pane_id: str
     label: str
+
 
 class HerdrClientPort(ABC):
     @abstractmethod
@@ -138,7 +140,9 @@ class HerdrClientPort(ABC):
 @router.post("/api/toggle-recording-and-send-to-herdr")
 async def toggle_recording_and_send_to_herdr(request: Request) -> dict[str, object]:
     app_state: AppState = request.app.state.app_state
-    recording_session_service: RecordingSessionService = request.app.state.recording_session_service
+    recording_session_service: RecordingSessionService = (
+        request.app.state.recording_session_service
+    )
     herdr_client: HerdrClientPort = request.app.state.herdr_client
 
     if app_state.recording:
@@ -146,7 +150,9 @@ async def toggle_recording_and_send_to_herdr(request: Request) -> dict[str, obje
         return {"recording": False}
 
     target_pane_id = await herdr_client.get_focused_pane_id()
-    await recording_session_service.start_session(target_pane_id=target_pane_id, herdr_requested=True)
+    await recording_session_service.start_session(
+        target_pane_id=target_pane_id, herdr_requested=True
+    )
     return {"recording": True, "target_pane_id": target_pane_id}
 
 
@@ -182,8 +188,11 @@ async def send_to_herdr(request: Request) -> dict[str, bool]:
 `containers.py`:
 ```python
 from src.shared.herdr.socket_client import HerdrSocketClient
+
 ...
-herdr_client: providers.Provider[HerdrClientPort] = providers.Singleton(HerdrSocketClient)
+herdr_client: providers.Provider[HerdrClientPort] = providers.Singleton(
+    HerdrSocketClient
+)
 ```
 
 `app.py`の`_build_lifespan`(39-71行目)に`app.state.herdr_client = container.herdr_client()`を追加し、`create_app`(74-92行目)で`app.include_router(herdr_routes.router)`を追加する。

@@ -110,6 +110,7 @@ class ScreenshotCapturePort(ABC):
     def capture(self, monitor_index: int) -> bytes | None:
         """PNG形式のスクリーンショットを撮る。失敗時はNoneを返す(例外は伝播させない)。"""
 
+
 class IntentTranslatorPort(ABC):
     @abstractmethod
     async def translate(self, text: str, screenshot_png: bytes) -> str:
@@ -128,13 +129,16 @@ def on_speech_start(self) -> None:
         return
     self._pending = self._capture.capture(settings.screenshot_monitor_index)
 
+
 def on_flush(self, *, produced_text: bool) -> None:
     if produced_text:
         self._ready.append(self._pending)
     self._pending = None
 
+
 def pop_ready(self) -> bytes | None:
     return self._ready.popleft() if self._ready else None
+
 
 def reset(self) -> None:
     self._pending = None
@@ -150,7 +154,11 @@ ON/OFFは呼ばれるたびに`settings_repository.get()`で読み直す(校正�
 ```python
 async def execute(self, text: str, screenshot_png: bytes | None) -> tuple[str, bool]:
     settings = self._settings_repository.get()
-    if self._translator is None or not settings.intent_translation_enabled or screenshot_png is None:
+    if (
+        self._translator is None
+        or not settings.intent_translation_enabled
+        or screenshot_png is None
+    ):
         return text, False
     try:
         result = await asyncio.wait_for(
@@ -168,7 +176,9 @@ async def execute(self, text: str, screenshot_png: bytes | None) -> tuple[str, b
 `dictation`の2ポートを実装し、`SegmentScreenshotPairer`と`IntentTranslationUseCase`を橋渡しする唯一の接続点。
 
 ```python
-class IntentTranslationDictationAdapter(SegmentLifecycleHookPort, RecognizedTextTransformPort):
+class IntentTranslationDictationAdapter(
+    SegmentLifecycleHookPort, RecognizedTextTransformPort
+):
     def on_speech_start(self) -> None:
         self._pairer.on_speech_start()
 
@@ -195,7 +205,9 @@ class MssScreenshotCapturer(ScreenshotCapturePort):
             with mss.mss() as sct:
                 monitors = sct.monitors
                 if not 0 <= monitor_index < len(monitors):
-                    logger.warning("screenshot_monitor_index=%d が範囲外です", monitor_index)
+                    logger.warning(
+                        "screenshot_monitor_index=%d が範囲外です", monitor_index
+                    )
                     return None
                 shot = sct.grab(monitors[monitor_index])
                 return mss.tools.to_png(shot.rgb, shot.size)
@@ -211,25 +223,41 @@ class MssScreenshotCapturer(ScreenshotCapturePort):
 ```python
 _MAX_COMPLETION_TOKENS = 2500  # 実測: 300で失敗、2000で成功。余裕を持たせる
 
+
 class AzureOpenAIIntentTranslator(IntentTranslatorPort):
-    def __init__(self, *, endpoint: str, api_key: str, deployment: str, api_version: str, prompt: str) -> None:
-        self._client = AsyncAzureOpenAI(azure_endpoint=endpoint, api_key=api_key, api_version=api_version)
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        api_key: str,
+        deployment: str,
+        api_version: str,
+        prompt: str,
+    ) -> None:
+        self._client = AsyncAzureOpenAI(
+            azure_endpoint=endpoint, api_key=api_key, api_version=api_version
+        )
         self._deployment = deployment
         self._prompt = prompt
 
     async def translate(self, text: str, screenshot_png: bytes) -> str:
         if not text.strip():
             return text
-        image_data_url = f"data:image/png;base64,{base64.b64encode(screenshot_png).decode('ascii')}"
+        image_data_url = (
+            f"data:image/png;base64,{base64.b64encode(screenshot_png).decode('ascii')}"
+        )
         response = await self._client.chat.completions.create(
             model=self._deployment,
             max_completion_tokens=_MAX_COMPLETION_TOKENS,
             messages=[
                 {"role": "system", "content": self._prompt},
-                {"role": "user", "content": [
-                    {"type": "text", "text": text},
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
-                ]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": text},
+                        {"type": "image_url", "image_url": {"url": image_data_url}},
+                    ],
+                },
             ],
         )
         content = response.choices[0].message.content
@@ -299,17 +327,50 @@ intent_translation_prompt: str = _DEFAULT_INTENT_TRANSLATION_PROMPT
 ### `src/containers.py`(DI配線)
 
 ```python
-def _create_intent_translator(*, mai_api_key: str, mai_endpoint: str, deployment: str, api_version: str, prompt: str) -> AzureOpenAIIntentTranslator | None:
+def _create_intent_translator(
+    *,
+    mai_api_key: str,
+    mai_endpoint: str,
+    deployment: str,
+    api_version: str,
+    prompt: str,
+) -> AzureOpenAIIntentTranslator | None:
     if not mai_api_key or not mai_endpoint:
         return None
-    return AzureOpenAIIntentTranslator(endpoint=mai_endpoint, api_key=mai_api_key, deployment=deployment, api_version=api_version, prompt=prompt)
+    return AzureOpenAIIntentTranslator(
+        endpoint=mai_endpoint,
+        api_key=mai_api_key,
+        deployment=deployment,
+        api_version=api_version,
+        prompt=prompt,
+    )
+
 
 # Provider定義
 screenshot_capture = providers.Singleton(MssScreenshotCapturer)
-segment_screenshot_pairer = providers.Singleton(SegmentScreenshotPairer, screenshot_capture=screenshot_capture, settings_repository=settings_repository)
-intent_translator = providers.Singleton(_create_intent_translator, mai_api_key=secrets.provided.mai_api_key, mai_endpoint=secrets.provided.mai_endpoint, deployment=settings.provided.intent_translation_model_name, api_version=settings.provided.azure_openai_api_version, prompt=settings.provided.intent_translation_prompt)
-intent_translation_use_case = providers.Singleton(IntentTranslationUseCase, translator=intent_translator, settings_repository=settings_repository)
-intent_translation_dictation_adapter = providers.Singleton(IntentTranslationDictationAdapter, pairer=segment_screenshot_pairer, use_case=intent_translation_use_case)
+segment_screenshot_pairer = providers.Singleton(
+    SegmentScreenshotPairer,
+    screenshot_capture=screenshot_capture,
+    settings_repository=settings_repository,
+)
+intent_translator = providers.Singleton(
+    _create_intent_translator,
+    mai_api_key=secrets.provided.mai_api_key,
+    mai_endpoint=secrets.provided.mai_endpoint,
+    deployment=settings.provided.intent_translation_model_name,
+    api_version=settings.provided.azure_openai_api_version,
+    prompt=settings.provided.intent_translation_prompt,
+)
+intent_translation_use_case = providers.Singleton(
+    IntentTranslationUseCase,
+    translator=intent_translator,
+    settings_repository=settings_repository,
+)
+intent_translation_dictation_adapter = providers.Singleton(
+    IntentTranslationDictationAdapter,
+    pairer=segment_screenshot_pairer,
+    use_case=intent_translation_use_case,
+)
 ```
 
 既存の`audio_pipeline_coordinator`/`segment_accumulator`のProvider定義に`segment_lifecycle_hook=intent_translation_dictation_adapter`/`text_transform=intent_translation_dictation_adapter`を追加する。`secrets_loader.py`/`Secrets`は変更不要(`mai_api_key`/`mai_endpoint`をAzure OpenAI互換チャットにも流用する。コメントで「同一Azureリソースを STT とチャット補完の両方で使う」旨を一言追記する)。

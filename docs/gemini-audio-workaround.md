@@ -60,6 +60,7 @@ def _make_message(text: str | None) -> MagicMock:
     msg.server_content = server_content
     return msg
 
+
 # 修正後
 def _make_message(text: str | None) -> MagicMock:
     msg = MagicMock()
