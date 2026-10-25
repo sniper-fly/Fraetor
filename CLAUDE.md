@@ -69,3 +69,29 @@ dictation自体の改良(バグ修正・機能追加)はこのリポジトリで
 fraetor-dictationリポジトリ側で行う。ローカルのクローン先は
 `CLAUDE.local.md`を参照。
 
+### Fraetorとdictationの責務境界(必ず守る)
+
+音声入力まわりに機能を足す・変更するときは、**実装を始める前に**
+[責務境界の正本 `docs/boundary.md`](https://github.com/sniper-fly/fraetor-dictation/blob/main/docs/boundary.md)
+を読み、置き場所を判断フローで決めること。ローカルでは
+`CLAUDE.local.md`のクローン先の`docs/boundary.md`を読む。
+ドキュメントと食い違う変更が必要なら、実装せずユーザーに確認する。
+
+要点(詳細・実例は正本を参照):
+
+- **dictation(ライブラリ)に置く**: 録音セッション、無音区切り、STT/VAD/マイク、
+  SSE配信、STTイベント型、拡張点の「口」(ポートのABC)
+- **Fraetorに置く**: 設定の保存・UI、資格情報(SSM)、認識結果の永続化・後処理
+  (校正・意図翻訳・Herdr送信)、HTTPルート、`containers.py`、
+  拡張点の「中身」(アダプタ)
+- 迷ったら**Fraetorに置く**。2つ目のホストが必要とした時点でライブラリへ移す
+- Fraetorは`dictation`を**層ごとの公開口**(`dictation.domain.ports`、
+  `dictation.application.*`、infrastructureのfactory)経由で使う。
+  `from dictation import X`の一括importは使わない(全層を再exportするため、
+  import-linterの「PresentationはInfrastructure具象をimportしない」検証が無効になる)。
+  `MaiTranscribeClient`等の具象クラスは直接importせず、factory経由で使う。
+  継承・上書き・monkeypatch・コードのコピーもしない
+- Fraetor固有の関心事(履歴用フィールド等)を、ライブラリのドメインモデルに載せない
+- 両方に変更が及ぶ場合は、ライブラリを先に変更・テスト・タグ付け・pushしてから、
+  Fraetor側で`uv add`してタグを進める
+
