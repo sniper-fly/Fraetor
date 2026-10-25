@@ -19,7 +19,14 @@ from tests.e2e.helpers import iter_sse_events
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+# 通常の短い音声 (最長12秒) 向けの、session_end を待つ上限。
 _SESSION_END_WAIT_SEC = 30.0
+
+# 録音が止まってから session_end が届くまでの余裕。録音停止後に残りを MAI へ
+# 送る最終送信の応答時間を吸収する。実測では応答は 0.3〜5.1 秒で、MAI 自体の
+# 上限 (mai_timeout_sec) は 60 秒。長いセッションの待機上限は
+# 「セッションの最大長 + この余裕」で導出する。
+_FINAL_TRANSCRIPTION_MARGIN_SEC = 15.0
 
 # fixtures/audio/README.md に記載の想定発話。認識結果の突き合わせ表示にのみ使う
 # (音声認識の表記揺れがあるため完全一致は求めない)
@@ -46,7 +53,9 @@ def _print_recognized(wav_filename: str, events: list[dict[str, str]]) -> None:
     )
 
 
-async def _run_session(base_url: str) -> list[dict[str, str]]:
+async def _run_session(
+    base_url: str, *, session_end_wait_sec: float = _SESSION_END_WAIT_SEC
+) -> list[dict[str, str]]:
     """録音開始→session_endまでのSSEイベントを集めて返す。"""
     events: list[dict[str, str]] = []
     async with (
@@ -61,7 +70,7 @@ async def _run_session(base_url: str) -> list[dict[str, str]]:
                 if event["event"] == "session_end":
                     return
 
-        await asyncio.wait_for(collect(), timeout=_SESSION_END_WAIT_SEC)
+        await asyncio.wait_for(collect(), timeout=session_end_wait_sec)
     return events
 
 
@@ -178,16 +187,22 @@ class TestFileAudioAndVad:
         `max_session_duration_sec`/`silence_timeout_sec` も音声の長さ
         (30秒、末尾に10秒以上の無音) に合わせて上書きする。
         """
+        max_session_duration_sec = 30
         base_url = fraetor_server_with_audio(
             "06_long_speech.wav",
             settings_overrides={
                 "segment_silence_sec": 0.45,
                 "silence_timeout_sec": 5,
-                "max_session_duration_sec": 30,
+                "max_session_duration_sec": max_session_duration_sec,
             },
         )
 
-        events = await _run_session(base_url)
+        events = await _run_session(
+            base_url,
+            session_end_wait_sec=(
+                max_session_duration_sec + _FINAL_TRANSCRIPTION_MARGIN_SEC
+            ),
+        )
 
         recognized = [
             json.loads(e["data"]) for e in events if e["event"] == "recognized"
