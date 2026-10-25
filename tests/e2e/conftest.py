@@ -48,6 +48,16 @@ def _block_real_aws_calls() -> None:
     """
 
 
+@pytest.fixture(autouse=True)
+def _isolate_aws_profile() -> None:
+    """`tests/conftest.py` の `AWS_PROFILE` 隔離を E2E 配下でのみ解除する。
+
+    E2E は実 AWS SSO セッションで SSM を読むため、実行者が明示指定した
+    `AWS_PROFILE` を残す必要がある (CLAUDE.md: AWS を使うコマンドは
+    `AWS_PROFILE` を明示指定する)。
+    """
+
+
 def _wait_for_server(process: subprocess.Popen[bytes]) -> None:
     deadline = time.monotonic() + _STARTUP_TIMEOUT_SEC
     while time.monotonic() < deadline:
