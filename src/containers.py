@@ -5,20 +5,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dependency_injector import containers, providers
-from dictation.application.app_state import AppState
-from dictation.application.audio_pipeline_coordinator import (
+from dictation import (
+    AppState,
     AudioPipelineCoordinator,
-)
-from dictation.application.recording_session_service import (
     RecordingSessionService,
+    SegmentAccumulator,
+    SSEBroadcaster,
+    SttEventRelay,
+    TranscriptionQueue,
+    create_audio_capture,
+    create_stt_engine,
+    create_vad,
 )
-from dictation.application.segment_accumulator import SegmentAccumulator
-from dictation.application.stt_event_relay import SttEventRelay
-from dictation.application.transcription_queue import TranscriptionQueue
-from dictation.infrastructure.audio.factory import create_audio_capture
-from dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
-from dictation.infrastructure.stt.factory import create_stt_engine
-from dictation.infrastructure.vad.factory import create_vad
 
 from src.intent_translation.application.dictation_hook_adapter import (
     IntentTranslationDictationAdapter,
