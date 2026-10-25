@@ -22,11 +22,14 @@ if TYPE_CHECKING:
 # 通常の短い音声 (最長12秒) 向けの、session_end を待つ上限。
 _SESSION_END_WAIT_SEC = 30.0
 
-# 録音が止まってから session_end が届くまでの余裕。録音停止後に残りを MAI へ
-# 送る最終送信の応答時間を吸収する。実測では応答は 0.3〜5.1 秒で、MAI 自体の
-# 上限 (mai_timeout_sec) は 60 秒。長いセッションの待機上限は
-# 「セッションの最大長 + この余裕」で導出する。
-_FINAL_TRANSCRIPTION_MARGIN_SEC = 15.0
+# 長いセッションのテストで、サーバー側が MAI の応答を待つ上限
+# (DynamicSettings.mai_timeout_sec)。既定は 60 秒だが、これだと session_end が
+# 最悪で「セッション最大長 + 60 秒」まで遅れ、待機の上限を現実的に決められない。
+# 実測では MAI の応答は 0.3〜6.2 秒 (約 200 回) だが、まれに 10 秒を超えて返らない
+# ことがある (30 回中 1 回)。15 秒を超えて返らない場合は、その区間のテキストを
+# 諦めて先へ進む (録音は継続する設計)。外部サービスの遅延を、テストの失敗として
+# 検出できる大きさに収める値。
+_LONG_SESSION_MAI_TIMEOUT_SEC = 15.0
 
 # fixtures/audio/README.md に記載の想定発話。認識結果の突き合わせ表示にのみ使う
 # (音声認識の表記揺れがあるため完全一致は求めない)
@@ -194,13 +197,16 @@ class TestFileAudioAndVad:
                 "segment_silence_sec": 0.45,
                 "silence_timeout_sec": 5,
                 "max_session_duration_sec": max_session_duration_sec,
+                "mai_timeout_sec": _LONG_SESSION_MAI_TIMEOUT_SEC,
             },
         )
 
+        # session_end が届く最悪の時刻 = 録音が止まる上限 + 進行中の MAI 送信の
+        # 最大待ち。録音停止時は進行中の送信の完了を待つため、後者が加わる。
         events = await _run_session(
             base_url,
             session_end_wait_sec=(
-                max_session_duration_sec + _FINAL_TRANSCRIPTION_MARGIN_SEC
+                max_session_duration_sec + _LONG_SESSION_MAI_TIMEOUT_SEC
             ),
         )
 
