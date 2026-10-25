@@ -185,4 +185,4 @@ exclude-newer = "14 days"
 exclude-newer-package = { google-genai = "3 days" }
 
 [tool.uv.sources]
-fraetor-dictation = { git = "https://github.com/sniper-fly/fraetor-dictation.git", rev = "v0.2.0" }
+fraetor-dictation = { git = "https://github.com/sniper-fly/fraetor-dictation.git", rev = "v0.3.0" }

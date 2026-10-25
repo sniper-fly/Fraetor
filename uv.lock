@@ -11,11 +11,11 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-11T08:06:58.464036363Z"
+exclude-newer = "2026-10-11T14:45:15.177219821Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-google-genai = { timestamp = "2026-10-22T08:06:58.46404185Z", span = "P3D" }
+google-genai = { timestamp = "2026-10-22T14:45:15.177230211Z", span = "P3D" }
 
 [[package]]
 name = "annotated-doc"
@@ -635,7 +635,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.42.96" },
     { name = "dependency-injector", specifier = ">=4.49.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "fraetor-dictation", git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.2.0" },
+    { name = "fraetor-dictation", git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.3.0" },
     { name = "google-genai", specifier = ">=1.71.0" },
     { name = "json5", specifier = ">=0.15.0" },
     { name = "mss", specifier = ">=10.2.0" },
@@ -667,8 +667,8 @@ dev = [
 
 [[package]]
 name = "fraetor-dictation"
-version = "0.2.0"
-source = { git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.2.0#10c9a9598bf045cbfa32abc51449f9075175ad6a" }
+version = "0.3.0"
+source = { git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.3.0#036ae78e84b5abf10289b6419491bd8fe32ae1b2" }
 dependencies = [
     { name = "azure-ai-transcription" },
     { name = "numpy" },
