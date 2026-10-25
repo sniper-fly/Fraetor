@@ -85,12 +85,21 @@ fraetor-dictationリポジトリ側で行う。ローカルのクローン先は
   (校正・意図翻訳・Herdr送信)、HTTPルート、`containers.py`、
   拡張点の「中身」(アダプタ)
 - 迷ったら**Fraetorに置く**。2つ目のホストが必要とした時点でライブラリへ移す
-- Fraetorは`dictation`を**層ごとの公開口**(`dictation.domain.ports`、
+- Fraetorの本番コードは`dictation`を**層ごとの公開口**(`dictation.domain.ports`、
   `dictation.application.*`、infrastructureのfactory)経由で使う。
-  `from dictation import X`の一括importは使わない(全層を再exportするため、
+  `from dictation import X`の一括importは本番コードでは使わない(全層を再exportするため、
   import-linterの「PresentationはInfrastructure具象をimportしない」検証が無効になる)。
-  `MaiTranscribeClient`等の具象クラスは直接importせず、factory経由で使う。
-  継承・上書き・monkeypatch・コードのコピーもしない
+  `MaiTranscribeClient`等の具象クラスは直接importせず、factory経由で使う
+  - 例外1: `src/containers.py`(DIの組み立て役)は、infrastructureの具象を内部パスから
+    importしてよい。例外が及ぶのは組み立て役のみ(Presentation・ユースケース・
+    アダプタ・ドメインには及ばない)
+  - 例外2: テストコードは、dictationの公開口(`__all__`)に含まれる具象
+    (現状は`FileAudioCapture`・`SSEBroadcaster`)を`from dictation import X`で使ってよい。
+    公開口にない具象は使わない
+- テストでdictationの内部属性(`_locale`等)を検証しない。ライブラリ内部の振る舞いは
+  ライブラリ側のテストで検証し、Fraetorのテストは「Fraetorの設定が正しく配線されるか」
+  だけを見る(例: 実際に送られるHTTPリクエストの内容で確認する)
+- 継承・上書き・monkeypatch・コードのコピーをしない
 - Fraetor固有の関心事(履歴用フィールド等)を、ライブラリのドメインモデルに載せない
 - 両方に変更が及ぶ場合は、ライブラリを先に変更・テスト・タグ付け・pushしてから、
   Fraetor側で`uv add`してタグを進める
