@@ -5,12 +5,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
+from dictation import SSEBroadcaster
 from dictation.application.app_state import AppState
 from dictation.application.segment_accumulator import SegmentAccumulator
 from dictation.application.transcription_queue import TranscriptionQueue
 from dictation.domain.models import RecordingSession, TranscriptionJob
 from dictation.domain.ports import SttCapabilities, SttEnginePort
-from dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
 
 from src.presentation.routes.shutdown_routes import shutdown as shutdown_handler
 from src.shared.config.dynamic_settings import DynamicSettings

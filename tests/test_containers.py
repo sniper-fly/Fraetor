@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+import json
+import re
+from typing import TYPE_CHECKING, Any
 
+import responses
+from dependency_injector import providers
+from dictation import SSEBroadcaster
 from dictation.application.audio_pipeline_coordinator import (
     AudioPipelineCoordinator,
 )
 from dictation.application.recording_session_service import (
     RecordingSessionService,
 )
-from dictation.infrastructure.messaging.sse_broadcaster import SSEBroadcaster
-from dictation.infrastructure.stt.mai_transcribe_client import MaiTranscribeClient
 
 from src.containers import Container, _dynamic_float_fn, _dynamic_str_fn
 from src.shared.config.dynamic_settings import DynamicSettings
+from src.shared.config.secrets_loader import Secrets
 from src.transcript_history.application.finalize_session_use_case import (
     FinalizeSessionUseCase,
 )
@@ -24,6 +28,19 @@ from tests.fakes import InMemorySettingsRepository
 
 if TYPE_CHECKING:
     import pytest
+
+
+_DEFINITION_PART = re.compile(
+    rb'name="definition"[^\r]*\r\n(?:[^\r]+\r\n)*\r\n(.*?)\r\n--', re.DOTALL
+)
+
+
+def _extract_multipart_definition(body: bytes) -> dict[str, Any]:
+    """multipart リクエストから definition (JSON) パートを取り出す。"""
+    match = _DEFINITION_PART.search(body)
+    assert match is not None, "リクエストに definition パートが含まれていない"
+    parsed: dict[str, Any] = json.loads(match.group(1))
+    return parsed
 
 
 class TestContainer:
@@ -143,17 +160,49 @@ class TestSettingsRepositoryWiring:
 
         assert (settings.history_dir / "settings.jsonc").exists()
 
-    def test_stt_engine_factory_reads_settings_at_call_time(self) -> None:
-        """DI 配線時ではなくエンジン生成時に MAI 設定を読む。"""
+    async def test_stt_engine_factory_wires_settings_into_request(self) -> None:
+        """動的設定が、エンジン生成時に実際のリクエスト内容へ配線される。
+
+        DI 配線時ではなくエンジン生成時に読むこと (設定画面の変更が次の
+        セッションから反映されること) と、設定の項目名の取り違えがないことを、
+        実際に送信される HTTP リクエストの内容で確認する。
+        """
         container = Container()
-        repo = container.settings_repository()
+        container.secrets.override(
+            providers.Object(
+                Secrets(
+                    mai_api_key="test-key",
+                    mai_endpoint="https://mai.example/",
+                    vertex_sa_info={},
+                    vertex_project="",
+                )
+            )
+        )
         factory = container.stt_engine_factory()
 
-        repo.update(DynamicSettings(mai_locale="en"))
+        container.settings_repository().update(
+            DynamicSettings(mai_locale="en", mai_transcribe_style="clean")
+        )
         engine = factory(asyncio.Queue())  # type: ignore[operator]
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.POST,
+                re.compile(r".*/speechtotext/transcriptions:transcribe.*"),
+                status=200,
+                json={"combinedPhrases": [{"text": "x"}]},
+            )
+            await engine.start()
+            engine.feed_audio(b"\x00\x00" * 1600)
+            await engine.stop()
+            body = rsps.calls[0].request.body
 
-        assert isinstance(engine, MaiTranscribeClient)
-        assert engine._locale == "en"
+        assert isinstance(body, bytes)
+        definition = _extract_multipart_definition(body)
+        assert definition["locales"] == ["en"]
+        assert definition["enhancedMode"]["model"] == "MAI-Transcribe-2"
+        assert definition["enhancedMode"]["modelOptions"] == {
+            "transcribeStyle": "clean"
+        }
 
     def test_recording_session_service_receives_repository(self) -> None:
         container = Container()

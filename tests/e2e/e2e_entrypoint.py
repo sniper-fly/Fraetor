@@ -39,9 +39,7 @@ def main() -> None:
         msg = f"{_ENV_AUDIO_FILE} 環境変数が未設定です。"
         raise RuntimeError(msg)
 
-    from dictation.infrastructure.audio.file_capture import (  # noqa: PLC0415
-        FileAudioCapture,
-    )
+    from dictation import FileAudioCapture  # noqa: PLC0415
 
     from src.containers import Container  # noqa: PLC0415
     from src.presentation.app import create_app  # noqa: PLC0415

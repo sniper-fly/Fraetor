@@ -173,7 +173,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-playwright>=0.8.0",
     "pytest-timeout>=2.4.0",
-    "responses>=0.26.2",
+    "responses>=0.26.3",
     "ruff>=0.15.4",
 ]
 
@@ -185,4 +185,4 @@ exclude-newer = "14 days"
 exclude-newer-package = { google-genai = "3 days" }
 
 [tool.uv.sources]
-fraetor-dictation = { git = "https://github.com/sniper-fly/fraetor-dictation.git", rev = "v0.1.0" }
+fraetor-dictation = { git = "https://github.com/sniper-fly/fraetor-dictation.git", rev = "v0.2.0" }
