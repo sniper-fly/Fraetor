@@ -16,6 +16,7 @@ from src.presentation.routes import (
     recording_routes,
     settings_routes,
     shutdown_routes,
+    stats_routes,
 )
 
 if TYPE_CHECKING:
@@ -58,6 +59,8 @@ def _build_lifespan(
         app.state.proofread_text_use_case = container.proofread_text_use_case()
         app.state.settings_repository = settings_repository
         app.state.herdr_client = container.herdr_client()
+        app.state.stt_settings_schemas = container.stt_settings_schemas()
+        app.state.summarize_latency_use_case = container.summarize_latency_use_case()
         app.state.pending_session_store = container.pending_session_store()
 
         app.state.transcription_queue.start()
@@ -67,7 +70,7 @@ def _build_lifespan(
         if app_state.recording:
             await app.state.recording_session_service.stop_session()
         await app.state.transcription_queue.shutdown(
-            timeout=settings_repository.get().mai_timeout_sec + 5
+            timeout=settings_repository.get().stt.timeout_sec + 5
         )
         logger.info("Fraetor shutting down")
 
@@ -92,6 +95,7 @@ def create_app(audio_capture: AudioCapturePort | None = None) -> FastAPI:
     app.include_router(proofread_routes.router)
     app.include_router(shutdown_routes.router)
     app.include_router(settings_routes.router)
+    app.include_router(stats_routes.router)
     app.include_router(herdr_routes.router)
     return app
 

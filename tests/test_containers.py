@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from unittest.mock import patch
 
+import pytest
 import responses
 from dependency_injector import providers
-from dictation import SSEBroadcaster
+from dictation import GeminiSettings, MaiSettings, SSEBroadcaster
 from dictation.application.audio_pipeline_coordinator import (
     AudioPipelineCoordinator,
 )
@@ -15,8 +17,8 @@ from dictation.application.recording_session_service import (
     RecordingSessionService,
 )
 
-from src.containers import Container, _dynamic_float_fn, _dynamic_str_fn
-from src.shared.config.dynamic_settings import DynamicSettings
+from src.containers import Container, _dynamic_float_fn
+from src.shared.config.dynamic_settings import DynamicSettings, SttSettings
 from src.shared.config.secrets_loader import Secrets
 from src.transcript_history.application.finalize_session_use_case import (
     FinalizeSessionUseCase,
@@ -26,12 +28,16 @@ from src.transcript_history.infrastructure.jsonl_history_repository import (
 )
 from tests.fakes import InMemorySettingsRepository
 
-if TYPE_CHECKING:
-    import pytest
-
-
 _DEFINITION_PART = re.compile(
     rb'name="definition"[^\r]*\r\n(?:[^\r]+\r\n)*\r\n(.*?)\r\n--', re.DOTALL
+)
+
+
+_MAI_SECRETS = Secrets(
+    mai_api_key="test-key",
+    mai_endpoint="https://mai.example/",
+    vertex_sa_info={},
+    vertex_project="",
 )
 
 
@@ -137,12 +143,65 @@ class TestContainer:
         stt_event_queue は呼び出し時の引数として渡す。
         """
         container = Container()
+        container.secrets.override(providers.Object(_MAI_SECRETS))
         factory = container.stt_engine_factory()
 
-        first = factory(asyncio.Queue())  # type: ignore[operator]
-        second = factory(asyncio.Queue())  # type: ignore[operator]
+        first = factory(asyncio.Queue())
+        second = factory(asyncio.Queue())
 
         assert first is not second
+
+    def test_missing_credentials_for_selected_engine_raise_clear_error(self) -> None:
+        """資格情報が無いエンジンを選んだ場合、セッション開始時に原因が分かる。"""
+        container = Container()
+        container.secrets.override(providers.Object(_MAI_SECRETS))
+        container.settings_repository().update(
+            DynamicSettings(stt=SttSettings(engine="gemini"))
+        )
+        factory = container.stt_engine_factory()
+
+        with pytest.raises(ValueError, match="Vertex AI"):
+            factory(asyncio.Queue())
+
+    def test_engine_selection_is_read_at_each_session(self) -> None:
+        """`stt.engine` を切り替えると、次の生成から別エンジンの送信先になる。
+
+        内部属性ではなく、`genai.Client` に渡る Vertex の project / location で
+        配線を確認する。
+        """
+        container = Container()
+        container.secrets.override(
+            providers.Object(
+                Secrets(
+                    mai_api_key="k",
+                    mai_endpoint="https://mai.example/",
+                    vertex_sa_info={"type": "service_account"},
+                    vertex_project="my-project",
+                )
+            )
+        )
+        repo = container.settings_repository()
+        factory = container.stt_engine_factory()
+        repo.update(
+            DynamicSettings(
+                stt=SttSettings(engine="gemini", gemini=GeminiSettings(location="eu"))
+            )
+        )
+
+        with (
+            patch(
+                "dictation.infrastructure.stt.gemini_transcribe_client.genai.Client"
+            ) as client_cls,
+            patch(
+                "dictation.infrastructure.stt.gemini_transcribe_client.service_account"
+            ),
+        ):
+            factory(asyncio.Queue())
+
+        kwargs = client_cls.call_args.kwargs
+        assert kwargs["project"] == "my-project"
+        assert kwargs["location"] == "eu"
+        assert kwargs["vertexai"] is True
 
 
 class TestSettingsRepositoryWiring:
@@ -181,9 +240,13 @@ class TestSettingsRepositoryWiring:
         factory = container.stt_engine_factory()
 
         container.settings_repository().update(
-            DynamicSettings(mai_locale="en", mai_transcribe_style="clean")
+            DynamicSettings(
+                stt=SttSettings(
+                    mai=MaiSettings(locale="en", transcribe_style="verbatim")
+                )
+            )
         )
-        engine = factory(asyncio.Queue())  # type: ignore[operator]
+        engine = factory(asyncio.Queue())
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.POST,
@@ -201,7 +264,7 @@ class TestSettingsRepositoryWiring:
         assert definition["locales"] == ["en"]
         assert definition["enhancedMode"]["model"] == "MAI-Transcribe-2"
         assert definition["enhancedMode"]["modelOptions"] == {
-            "transcribeStyle": "clean"
+            "transcribeStyle": "verbatim"
         }
 
     def test_recording_session_service_receives_repository(self) -> None:
@@ -256,14 +319,6 @@ class TestDynamicSettingsFn:
         repo.update(DynamicSettings(vad_threshold=0.9))
 
         assert fn() == 0.9
-
-    def test_dynamic_str_fn_reads_attribute_at_call_time(self) -> None:
-        repo = InMemorySettingsRepository(DynamicSettings(mai_locale="ja"))
-        fn = _dynamic_str_fn(repo, "mai_locale")
-
-        repo.update(DynamicSettings(mai_locale="en"))
-
-        assert fn() == "en"
 
 
 class TestTranscriptionQueueWiring:

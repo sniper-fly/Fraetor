@@ -20,6 +20,18 @@ async def get_settings(request: Request) -> DynamicSettings:
     return settings_repository.get()
 
 
+@router.get("/api/settings/stt-schema")
+async def get_stt_schema(request: Request) -> dict[str, object]:
+    """エンジンごとの設定項目のスキーマ (型・範囲・選択肢・既定値) を返す。
+
+    設定画面が選択中エンジンの入力欄を組み立てるために使う。スキーマは
+    ライブラリのエンジン設定モデルから生成するため、エンジンが増減しても
+    ここは変わらない。表示ラベル・単位はフロント側が持つ。
+    """
+    schemas: dict[str, object] = request.app.state.stt_settings_schemas
+    return schemas
+
+
 @router.put("/api/settings")
 async def update_settings(request: Request, body: DynamicSettings) -> DynamicSettings:
     """設定を全項目まとめて差し替える。

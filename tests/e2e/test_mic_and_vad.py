@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 _SESSION_END_WAIT_SEC = 30.0
 
 # 長いセッションのテストで、サーバー側が MAI の応答を待つ上限
-# (DynamicSettings.mai_timeout_sec)。既定は 60 秒だが、これだと session_end が
+# (DynamicSettings.stt.mai.timeout_sec)。既定は 60 秒だが、これだと session_end が
 # 最悪で「セッション最大長 + 60 秒」まで遅れ、待機の上限を現実的に決められない。
 # 実測では MAI の応答は 0.3〜6.2 秒 (約 200 回) だが、まれに 10 秒を超えて返らない
 # ことがある (30 回中 1 回)。15 秒を超えて返らない場合は、その区間のテキストを
@@ -197,7 +197,7 @@ class TestFileAudioAndVad:
                 "segment_silence_sec": 0.45,
                 "silence_timeout_sec": 5,
                 "max_session_duration_sec": max_session_duration_sec,
-                "mai_timeout_sec": _LONG_SESSION_MAI_TIMEOUT_SEC,
+                "stt": {"mai": {"timeout_sec": _LONG_SESSION_MAI_TIMEOUT_SEC}},
             },
         )
 

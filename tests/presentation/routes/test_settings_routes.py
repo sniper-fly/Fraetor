@@ -21,14 +21,14 @@ def _valid_payload(**overrides: object) -> dict[str, object]:
 class TestGetSettings:
     def test_returns_current_values(self, client: TestClient) -> None:
         repo: SettingsRepositoryPort = client.app.state.settings_repository  # type: ignore[attr-defined]
-        repo.update(DynamicSettings(segment_silence_sec=4.5, mai_locale="en"))
+        repo.update(DynamicSettings(segment_silence_sec=4.5, sse_keepalive_sec=7))
 
         response = client.get("/api/settings")
 
         assert response.status_code == 200
         body = response.json()
         assert body["segment_silence_sec"] == 4.5
-        assert body["mai_locale"] == "en"
+        assert body["sse_keepalive_sec"] == 7
 
     def test_returns_all_fields(self, client: TestClient) -> None:
         """UI がフォームを組み立てられるよう、全項目を欠落なく返す。"""
@@ -119,11 +119,13 @@ class TestUpdateSettings:
         全項目を送るため実害はないが、暗黙のリセットが起きる点は
         API の契約として明示しておく。
         """
-        client.put("/api/settings", json=_valid_payload(mai_locale="en"))
+        client.put("/api/settings", json=_valid_payload(sse_keepalive_sec=7))
         payload = _valid_payload(segment_silence_sec=2.0)
-        del payload["mai_locale"]
+        del payload["sse_keepalive_sec"]
 
         response = client.put("/api/settings", json=payload)
 
         assert response.status_code == 200
-        assert response.json()["mai_locale"] == "ja", "現在値 'en' ではなく既定値に戻る"
+        assert response.json()["sse_keepalive_sec"] == 15, (
+            "現在値 7 ではなく既定値に戻る"
+        )

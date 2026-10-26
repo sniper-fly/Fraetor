@@ -33,7 +33,7 @@ async def shutdown(request: Request) -> dict[str, bool]:
     # キュー内の残ジョブ (session_end配信・履歴保存を含む) の完了を待ってから
     # shutdown を通知する。先に通知するとブラウザがSSE接続を諦め、
     # 文字起こし結果が失われる。
-    await transcription_queue.shutdown(timeout=settings.mai_timeout_sec + 5)
+    await transcription_queue.shutdown(timeout=settings.stt.timeout_sec + 5)
     await app_state.broadcaster.broadcast("shutdown", {})
     shutdowner: ProcessShutdownerPort = request.app.state.shutdowner
     shutdowner.schedule(settings.shutdown_delay_sec)

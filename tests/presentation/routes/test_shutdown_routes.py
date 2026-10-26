@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
-from dictation import SSEBroadcaster
+from dictation import MaiSettings, SSEBroadcaster
 from dictation.application.app_state import AppState
 from dictation.application.segment_accumulator import SegmentAccumulator
 from dictation.application.transcription_queue import TranscriptionQueue
@@ -13,7 +13,7 @@ from dictation.domain.models import RecordingSession, TranscriptionJob
 from dictation.domain.ports import SttCapabilities, SttEnginePort
 
 from src.presentation.routes.shutdown_routes import shutdown as shutdown_handler
-from src.shared.config.dynamic_settings import DynamicSettings
+from src.shared.config.dynamic_settings import DynamicSettings, SttSettings
 from tests.fakes import InMemorySettingsRepository, NoOpSessionFinalizationHook
 
 if TYPE_CHECKING:
@@ -118,7 +118,7 @@ class TestShutdownWaitsForTranscriptionQueue:
         request.app.state.transcription_queue = transcription_queue
         request.app.state.shutdowner = MagicMock()
         request.app.state.settings_repository = InMemorySettingsRepository(
-            DynamicSettings(mai_timeout_sec=1)
+            DynamicSettings(stt=SttSettings(mai=MaiSettings(timeout_sec=1)))
         )
 
         response = await shutdown_handler(request)

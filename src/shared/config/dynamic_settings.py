@@ -2,7 +2,27 @@ from __future__ import annotations
 
 from typing import Literal
 
+from dictation.domain.stt_settings import GeminiSettings, MaiSettings
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class SttSettings(BaseModel):
+    """STTの設定。使うエンジンの選択と、エンジンごとの設定を持つ。
+
+    エンジンごとの設定モデルはライブラリが定義し (型・範囲・選択肢・既定値)、
+    ここではそれを埋め込むだけにする。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    engine: Literal["mai", "gemini"] = "mai"
+    mai: MaiSettings = MaiSettings()
+    gemini: GeminiSettings = GeminiSettings()
+
+    @property
+    def timeout_sec(self) -> float:
+        """選択中のエンジンの1リクエストのタイムアウト (秒)。"""
+        return (self.mai if self.engine == "mai" else self.gemini).timeout_sec
 
 
 class DynamicSettings(BaseModel):
@@ -22,14 +42,14 @@ class DynamicSettings(BaseModel):
 
     vad_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
-    mai_locale: str = "ja"
-    mai_model_name: Literal["MAI-Transcribe-2"] = "MAI-Transcribe-2"
-    mai_transcribe_style: Literal["clean", "verbatim"] = "verbatim"
-    mai_timeout_sec: float = Field(default=60, gt=0)
+    stt: SttSettings = SttSettings()
 
     proofread_timeout_sec: float = Field(default=15, gt=0)
     shutdown_delay_sec: float = Field(default=0.5, gt=0)
     sse_keepalive_sec: float = Field(default=15, gt=0)
+
+    sound_enabled: bool = True
+    sound_volume: float = Field(default=0.3, ge=0.0, le=1.0)
 
     herdr_slot_count: int = Field(default=4, gt=0)
 

@@ -11,11 +11,11 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-11T14:45:15.177219821Z"
+exclude-newer = "2026-10-12T15:50:23.622397793Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-google-genai = { timestamp = "2026-10-22T14:45:15.177230211Z", span = "P3D" }
+google-genai = { timestamp = "2026-10-23T15:50:23.622408798Z", span = "P3D" }
 
 [[package]]
 name = "annotated-doc"
@@ -635,7 +635,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.42.96" },
     { name = "dependency-injector", specifier = ">=4.49.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "fraetor-dictation", git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.3.0" },
+    { name = "fraetor-dictation", git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.4.0" },
     { name = "google-genai", specifier = ">=1.71.0" },
     { name = "json5", specifier = ">=0.15.0" },
     { name = "mss", specifier = ">=10.2.0" },
@@ -667,10 +667,11 @@ dev = [
 
 [[package]]
 name = "fraetor-dictation"
-version = "0.3.0"
-source = { git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.3.0#036ae78e84b5abf10289b6419491bd8fe32ae1b2" }
+version = "0.4.0"
+source = { git = "https://github.com/sniper-fly/fraetor-dictation.git?rev=v0.4.0#755aecb6b44cf977f9c28b71ce109f42a89fd6eb" }
 dependencies = [
     { name = "azure-ai-transcription" },
+    { name = "google-genai" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "silero-vad" },
@@ -710,7 +711,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "2.25.0"
+version = "2.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -724,9 +725,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/62/0a/a3b7856ca840031d4393dbdd97b67fe811b20061315ed68b67b5c85ca80d/google_genai-2.25.0.tar.gz", hash = "sha256:ab603baa5eee0205926ad0f8d7f93e0400df6d67650e99c33e01ab228ea16ad6", size = 699564, upload-time = "2026-09-22T17:23:01.238Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/a4/b83b378b4a2fbbfb300c3fde0ff9f443f049c33e2accedf06bc0ad9bf393/google_genai-2.33.0.tar.gz", hash = "sha256:fced7f746da45264b34bcf6044a6fcdb91ebad1825e95c324ee48addb6e557ae", size = 758627, upload-time = "2026-10-23T00:06:28.332Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/a8/178dbb9d1d6cac721b01592e291146a024bae5ee3224e36569348921dd6c/google_genai-2.25.0-py3-none-any.whl", hash = "sha256:2e8f3a5f76ed00d5ffc3153f6089bc7d3511054eed53ad9cfc6095a7dc59b028", size = 1159631, upload-time = "2026-09-22T17:22:59.291Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/3b/9ae8e16c5b2177bfdec1c64769a93eea9093de684e0bbb95c10c77645fef/google_genai-2.33.0-py3-none-any.whl", hash = "sha256:f3f8ab696b35caf95c222e05268740c1ccd6934257890506be73b126150d3b14", size = 1222487, upload-time = "2026-10-23T00:06:26.528Z" },
 ]
 
 [[package]]

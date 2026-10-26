@@ -35,7 +35,7 @@ class TestRealCloudCommunication:
             pcm = wf.readframes(wf.getnframes())
 
         queue: asyncio.Queue[SttEvent] = asyncio.Queue()
-        engine = Container().stt_engine_factory()(queue)  # type: ignore[operator]
+        engine = Container().stt_engine_factory()(queue)
         await engine.start()
         engine.feed_audio(pcm)
         await engine.stop()

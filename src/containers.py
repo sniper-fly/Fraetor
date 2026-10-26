@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dependency_injector import containers, providers
 from dictation import (
+    STT_ENGINE_SPECS,
     AppState,
     AudioPipelineCoordinator,
     RecordingSessionService,
     SegmentAccumulator,
     SSEBroadcaster,
+    SttCredentials,
     SttEventRelay,
     TranscriptionQueue,
     create_audio_capture,
-    create_stt_engine,
     create_vad,
 )
 
@@ -42,6 +43,13 @@ from src.shared.config.secrets_loader import Secrets, load_secrets
 from src.shared.config.settings import load_settings
 from src.shared.herdr.socket_client import HerdrSocketClient
 from src.shared.process.signal_process_shutdowner import ProcessShutdowner
+from src.stt_stats.application.latency_hook_adapter import SttLatencyRecorder
+from src.stt_stats.application.summarize_latency_use_case import (
+    SummarizeLatencyUseCase,
+)
+from src.stt_stats.infrastructure.jsonl_latency_repository import (
+    JsonlLatencyRepository,
+)
 from src.transcript_history.application.dictation_finalization_adapter import (
     DictationSessionFinalizationAdapter,
 )
@@ -59,8 +67,10 @@ from src.transcript_history.infrastructure.pyperclip_clipboard import (
 )
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Callable
 
+    from dictation import SttEnginePort, SttEvent, SttLatencyHookPort
     from dictation.domain.ports import AudioCapturePort
 
     from src.shared.config.ports import SettingsRepositoryPort
@@ -118,11 +128,48 @@ def _dynamic_float_fn(
     return lambda: getattr(settings_repository.get(), attr)
 
 
-def _dynamic_str_fn(
-    settings_repository: SettingsRepositoryPort, attr: str
-) -> Callable[[], str]:
-    """`DynamicSettings` の指定属性 (str) を都度読む callable を返す。"""
-    return lambda: getattr(settings_repository.get(), attr)
+def _stt_credentials(secrets: Secrets) -> SttCredentials:
+    return SttCredentials(
+        mai_endpoint=secrets.mai_endpoint,
+        mai_api_key=secrets.mai_api_key,
+        vertex_sa_info=secrets.vertex_sa_info,
+        vertex_project=secrets.vertex_project,
+    )
+
+
+def _stt_settings_schemas() -> dict[str, dict[str, Any]]:
+    """エンジンごとの設定モデルの JSON Schema (設定画面の入力欄の元)。"""
+    return {
+        name: spec.settings_model.model_json_schema()
+        for name, spec in STT_ENGINE_SPECS.items()
+    }
+
+
+def _stt_engine_factory(
+    *,
+    settings_repository: SettingsRepositoryPort,
+    credentials: SttCredentials,
+    sample_rate: int,
+    latency_hook: SttLatencyHookPort,
+) -> Callable[[asyncio.Queue[SttEvent]], SttEnginePort]:
+    """セッション開始ごとに、その時点で選択中のエンジンを生成する関数を返す。
+
+    エンジン名と設定はどちらも呼び出し時に読む。設定画面で切り替えた内容は
+    次のセッションから反映される。
+    """
+
+    def create(stt_event_queue: asyncio.Queue[SttEvent]) -> SttEnginePort:
+        stt_settings = settings_repository.get().stt
+        engine = stt_settings.engine
+        return STT_ENGINE_SPECS[engine].create(
+            stt_event_queue,
+            credentials=credentials,
+            sample_rate=sample_rate,
+            settings_fn=lambda: getattr(settings_repository.get().stt, engine),
+            latency_hook=latency_hook,
+        )
+
+    return create
 
 
 def _create_proofreader(
@@ -198,27 +245,36 @@ class Container(containers.DeclarativeContainer):
 
     app_state = providers.Singleton(AppState, broadcaster=broadcaster)
 
-    # 動的設定に依存する値 (locale/model/timeout/threshold) は provider の
-    # 引数として束縛せず、ファクトリ関数が呼び出し時に settings_repository
-    # から読む。DI 配線時に値が固定されると設定画面の変更が反映されない。
-    stt_engine_factory = providers.Factory(
-        create_stt_engine,
-        endpoint=secrets.provided.mai_endpoint,
-        api_key=secrets.provided.mai_api_key,
+    # 動的設定に依存する値 (使うエンジン/エンジンごとの設定/threshold) は
+    # provider の引数として束縛せず、ファクトリ関数が呼び出し時に
+    # settings_repository から読む。DI 配線時に値が固定されると設定画面の
+    # 変更が反映されない。
+    stt_credentials = providers.Singleton(
+        _stt_credentials,
+        secrets=secrets,
+    )
+
+    stt_settings_schemas = providers.Singleton(_stt_settings_schemas)
+
+    stt_latency_repository = providers.Singleton(
+        JsonlLatencyRepository, history_dir=settings.provided.history_dir
+    )
+
+    stt_latency_recorder = providers.Singleton(
+        SttLatencyRecorder, repository=stt_latency_repository
+    )
+
+    summarize_latency_use_case = providers.Singleton(
+        SummarizeLatencyUseCase, repository=stt_latency_repository
+    )
+
+    stt_engine_factory = providers.Callable(
+        _stt_engine_factory,
+        settings_repository=settings_repository,
+        credentials=stt_credentials,
         sample_rate=settings.provided.stt_sample_rate,
-        locale_fn=providers.Callable(
-            _dynamic_str_fn, settings_repository, "mai_locale"
-        ),
-        model_name_fn=providers.Callable(
-            _dynamic_str_fn, settings_repository, "mai_model_name"
-        ),
-        transcribe_style_fn=providers.Callable(
-            _dynamic_str_fn, settings_repository, "mai_transcribe_style"
-        ),
-        timeout_sec_fn=providers.Callable(
-            _dynamic_float_fn, settings_repository, "mai_timeout_sec"
-        ),
-    ).provider
+        latency_hook=stt_latency_recorder,
+    )
 
     vad_factory = providers.Factory(
         create_vad,

@@ -14,10 +14,13 @@ class TestDefaults:
         assert settings.silence_timeout_sec == 120
         assert settings.segment_silence_sec == 3.0
         assert settings.vad_threshold == 0.5
-        assert settings.mai_locale == "ja"
-        assert settings.mai_model_name == "MAI-Transcribe-2"
-        assert settings.mai_transcribe_style == "verbatim"
-        assert settings.mai_timeout_sec == 60
+        assert settings.stt.engine == "mai"
+        assert settings.stt.mai.locale == "ja"
+        assert settings.stt.mai.model_name == "MAI-Transcribe-2"
+        assert settings.stt.mai.transcribe_style == "clean"
+        assert settings.stt.mai.timeout_sec == 60
+        assert settings.stt.gemini.location == "global"
+        assert settings.stt.gemini.language_code == "ja-JP"
         assert settings.proofread_timeout_sec == 15
         assert settings.shutdown_delay_sec == 0.5
         assert settings.sse_keepalive_sec == 15
