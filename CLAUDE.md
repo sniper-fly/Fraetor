@@ -80,10 +80,12 @@ fraetor-dictationリポジトリ側で行う。ローカルのクローン先は
 要点(詳細・実例は正本を参照):
 
 - **dictation(ライブラリ)に置く**: 録音セッション、無音区切り、STT/VAD/マイク、
-  SSE配信、STTイベント型、拡張点の「口」(ポートのABC)
+  SSE配信、STTイベント型、拡張点の「口」(ポートのABC)、
+  STTエンジンごとの設定モデルと生成(`STT_ENGINE_SPECS`)
 - **Fraetorに置く**: 設定の保存・UI、資格情報(SSM)、認識結果の永続化・後処理
   (校正・意図翻訳・Herdr送信)、HTTPルート、`containers.py`、
-  拡張点の「中身」(アダプタ)
+  拡張点の「中身」(アダプタ)、STT応答時間の記録・集計・表示(ライブラリは
+  `SttLatencyHookPort` の口だけ)、設定画面の表示ラベル・単位
 - 迷ったら**Fraetorに置く**。2つ目のホストが必要とした時点でライブラリへ移す
 - Fraetorの本番コードは`dictation`を**層ごとの公開口**(`dictation.domain.ports`、
   `dictation.application.*`、infrastructureのfactory)経由で使う。

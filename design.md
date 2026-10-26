@@ -19,7 +19,8 @@ HTTP API (POST /api/toggle-recording) <-- DE キーバインド (curl)
          v
 SSE -> ブラウザ (TailwindCSS)
     |    |- メインタブ: 現在のセッション表示
-    |    +- 履歴タブ: 過去セッション一覧
+    |    |- 履歴タブ: 過去セッション一覧
+    |    +- 統計タブ: STTの応答時間 (エンジン別)
     |
 録音停止後
     |
@@ -64,7 +65,7 @@ pyperclip でクリップボードにコピー
 
 ```
 ┌─ Voice Input ──────────────────────────────────┐
-│ [メイン] [履歴] [設定]                             │
+│ [メイン] [履歴] [設定] [統計]                      │
 │                                                  │
 │ ┌──────────────────────────────────────────────┐ │
 │ │          録音: ● 停止中  校正: [ON]              │ │
@@ -128,7 +129,7 @@ pyperclip でクリップボードにコピー
 
 ```
 ┌─ Voice Input ──────────────────────────────────┐
-│ [メイン] [履歴] [設定]                             │
+│ [メイン] [履歴] [設定] [統計]                      │
 │                                                  │
 │ ┌────────────────────────────────────────────┐  │
 │ │ 最大セッション時間            [   600 ] 秒  │  │
@@ -147,6 +148,12 @@ pyperclip でクリップボードにコピー
   `tests/presentation/routes/test_page_routes.py` で検証する
   (片方だけ増減すると、欠落項目が既定値へ静かに戻るため)
 - 「保存」で全項目を `PUT /api/settings` に送る。部分更新ではない
+- STT の項目は汎用の `SETTINGS_FIELDS` ではなく、「認識エンジン」の選択と、
+  選択中エンジンの入力欄に分けて出す。入力欄は `GET /api/settings/stt-schema`
+  (ライブラリのエンジン設定モデルの JSON Schema: 型・範囲・選択肢) から組み立て、
+  ラベル・単位・選択肢の表示名だけ JS 側の `STT_FIELD_LABELS` が持つ。
+  エンジンが増えても画面側の変更は表示名だけで済む
+- 効果音は `sound_enabled` (チェックボックス) と `sound_volume` で調整する
 - 422 のバリデーションエラーは FastAPI の `detail` を整形してその場に表示する
 
 ## セッション管理
@@ -276,7 +283,7 @@ pyperclip でクリップボードにコピー
 - **`stop()` は進行中の flush を待つ**: 監視タスクを止める前に
   `_flush_lock` を取得する。送信中にキャンセルすると、送信済みオフセットだけ
   が進んでその区間のテキストが失われる (`stop()` の最終送信も拾えない)。
-  待ち時間は flush 自身の `mai_timeout_sec` で上限が付く
+  待ち時間は flush 自身の STT タイムアウト (`stt.<engine>.timeout_sec`) で上限が付く
 
 `SegmentAccumulator`/SSE/フロントエンドは変更していない。`recognized` を
 複数回受け取って逐次追記する経路は元から成立しており、flush 由来のイベントも
@@ -297,18 +304,25 @@ pyperclip でクリップボードにコピー
 `JsoncSettingsRepository` が `~/.voice-input/settings.jsonc` へ永続化する。
 
 - 現在値はメモリ上に保持し、`get()` はファイルI/Oを伴わない
-- ファイル不在時は各項目の説明コメント付きの雛形を書き出す。パース失敗・
-  バリデーション違反時は警告ログを出して既定値へフォールバックする
-  (`_load_secrets_or_empty` と同じ「起動を止めない」方針)
+- ファイル不在時は各項目の説明コメント付きの雛形を書き出す。パース失敗時は
+  警告ログを出して既定値へフォールバックする (`_load_secrets_or_empty` と同じ
+  「起動を止めない」方針)
+- バリデーション違反は**項目単位**で既定値に補い、他の項目の値は保つ。補った
+  項目名は警告ログに出す。未知のキーは無視する。クロスフィールド制約
+  (下記) の違反は関係する2項目だけを戻す
+- STT の設定は `stt` 以下に入れ子で持つ: `stt.engine` (`mai` / `gemini`) と、
+  エンジンごとの設定 `stt.mai` / `stt.gemini`。後者のモデル (型・範囲・選択肢・
+  既定値) はライブラリが定義し (`SttEngineSpecPort.settings_model`)、Fraetor は
+  埋め込むだけにする。エンジンの設定が互いに干渉しないよう、閉じた単位にしている
 - `update()` はファイル全体を書き直すため、ユーザーが書いたコメントは失われる
   (設定画面経由の更新なので許容する)
 - クロスフィールド制約: `segment_silence_sec < silence_timeout_sec`。逆転すると
   セグメントが1度も切り出されないままセッションがタイムアウトする
 
 **動的化の対象**: `max_session_duration_sec` / `silence_timeout_sec` /
-`segment_silence_sec` / `vad_threshold` / `mai_locale` / `mai_model_name` /
-`mai_transcribe_style` / `mai_timeout_sec` / `proofread_timeout_sec` /
-`shutdown_delay_sec` / `sse_keepalive_sec` / `herdr_slot_count`
+`segment_silence_sec` / `vad_threshold` / `stt.engine` / `stt.mai.*` /
+`stt.gemini.*` / `proofread_timeout_sec` / `shutdown_delay_sec` /
+`sse_keepalive_sec` / `sound_enabled` / `sound_volume` / `herdr_slot_count`
 
 **`Settings` に残すもの (動的化しない)**: `stt_sample_rate` (Singletonの
 `audio_capture` に紐づき、マイクストリーム再起動が必要)、`proofread_prompt` /
@@ -439,10 +453,16 @@ max_session_duration_sec = 600  # 最大セッション時間 (10分)
 silence_timeout_sec = 120  # 発話終了からの無音タイムアウト (2分)
 segment_silence_sec = 3.0  # 無音区切り (逐次文字起こし)。上記より小さいこと
 vad_threshold = 0.5  # 発話判定の閾値 (0.0〜1.0)
-mai_locale = "ja"  # 認識ロケール
-mai_model_name = "MAI-Transcribe-2"  # 認識モデル (対応モデルのみ選択可)
-mai_transcribe_style = "verbatim"  # 出力スタイル (verbatim=逐語 / clean=フィラー除去)
-mai_timeout_sec = 60  # 認識APIタイムアウト
+stt.engine = "mai"  # 使う認識エンジン (mai / gemini)。次のセッションから反映
+stt.mai.locale = "ja"  # MAI: 認識ロケール
+stt.mai.model_name = "MAI-Transcribe-2"  # MAI: 認識モデル (対応モデルのみ選択可)
+stt.mai.transcribe_style = "clean"  # MAI: 出力 (clean/verbatim)
+stt.mai.timeout_sec = 60  # MAI: 認識APIタイムアウト
+stt.gemini.location = "global"  # Gemini: Vertex AI ロケーション (global / us / eu)
+stt.gemini.language_code = "ja-JP"  # Gemini: 言語コード
+stt.gemini.timeout_sec = 60  # Gemini: 認識APIタイムアウト
+sound_enabled = true  # 録音の開始・停止の効果音
+sound_volume = 0.3  # 効果音の音量 (0.0〜1.0)
 proofread_timeout_sec = 15  # 校正APIタイムアウト
 shutdown_delay_sec = 0.5  # 終了リクエストからプロセス終了までの遅延
 sse_keepalive_sec = 15  # SSEキープアライブ送信間隔
@@ -504,8 +524,41 @@ presentation/           # FastAPIルート・スキーマ (HTTP変換のみ)
 | `SessionFinalizationHookPort` | `transcript_history.DictationSessionFinalizationAdapter` | 文字起こし完了時に `FinalizedSession` へ変換し `PendingSessionStore` に積む (必須) |
 
 動的設定 (`DynamicSettings`) はライブラリに渡さず、`containers.py` が
-`Callable[[], T]` (`_dynamic_float_fn`/`_dynamic_str_fn`) に変換して注入する。
-呼び出し時に評価されるため、設定画面の変更は次のセッションから反映される。
+`Callable[[], T]` に変換して注入する。呼び出し時に評価されるため、設定画面の
+変更は次のセッションから反映される。
+
+STT は `containers._stt_engine_factory` が、セッション開始ごとに `stt.engine` を
+読み、ライブラリのレジストリ (`STT_ENGINE_SPECS`: エンジン名 → `SttEngineSpecPort`)
+から仕様を引いて `create()` する。設定は `settings_fn` (選択中エンジンの設定を
+返す `Callable`) で渡し、資格情報は `SttCredentials` で渡す。必要な資格情報が
+無いエンジンを選んだ場合は、セッション開始時に `ValueError` で原因が分かる。
+
+## STT応答時間の計測 (stt_stats)
+
+STTが遅い日に別のエンジンへ切り替える判断材料として、エンジン別の応答時間を
+記録し、統計タブに表示する。
+
+- ライブラリ: バッチ型エンジンの送信前後を `time.monotonic()` で測り、成功・失敗・
+  タイムアウトのいずれでも `SttLatencyHookPort.on_stt_completed` に通知する
+  (口だけ。フックの例外は握り潰し、録音を止めない)。測るのは送信前後のみで、
+  WAV化は含まない。全エンジンで同じ位置を測る
+- Fraetor `src/stt_stats/`: `SttLatencyRecorder` が通知を `SttLatencySample` として
+  `{history_dir}/stt_latency.jsonl` に追記する (`JsonlLatencyRepository`)。
+  `SummarizeLatencyUseCase` が期間 (`today` = ローカル0時から / `7d`) 内を
+  エンジン別に集計する (件数・平均・中央値・p95・最大・失敗率・直近推移)。
+  時間の統計は成功した送信のみで、失敗は失敗率に数える。p95 は最近傍順位法
+- `GET /api/stats/stt?period=today|7d` が集計と現在選択中のエンジンを返す
+- 応答時間は送る音声の長さに比例して増えるため、件数と合わせて見る前提。
+  記録には `audio_duration_sec` も残している (将来、音声長あたりの時間を出せる)
+
+## 効果音
+
+録音の開始と停止を耳で区別できるようにする。ブラウザ側の Web Audio による
+合成音で、素材ファイルや静的配信は持たない。開始=上昇2音 (660→880Hz)、
+停止=下降2音 (880→550Hz)。SSE `status` の `recording` が**変化したときだけ**
+鳴らし、接続直後の現在状態では鳴らさない。自動再生制限のため、最初のユーザー
+操作 (`pointerdown`/`keydown`) で `AudioContext` を `resume()` する。操作前は
+鳴らない (ホットキーだけで録音を始める場合も、一度ページを操作すれば鳴る)。
 
 依存方向: `Presentation → Application → Domain`、`Infrastructure → Domain`
 (逆方向のimportは禁止)。Domain層はPydantic以外のサードパーティSDKに依存しない。
@@ -572,7 +625,7 @@ textareaにはそのセッション専用の内容のみが反映される (詳�
 既知の制約 (設計上受け入れているもの):
 
 - **体感遅延**: 直列処理のため、キューに複数ジョブが滞留していると、
-  後続ジョブは先行ジョブの処理完了 (最大 `mai_timeout_sec`秒、
+  後続ジョブは先行ジョブの処理完了 (最大 STT のタイムアウト秒、
   デフォルト60秒) を待ってから処理が始まる。各セッションの`recognized`/
   `interim`はそのセッション専用のブロックに即時反映されるため表示自体は
   待たされないが、校正・確定 (`finalize-session`) は表示キューの先頭

@@ -25,6 +25,7 @@
 | 機能3 Herdr 連携によるコピペ不要の送信 | 実装済み | `src/shared/herdr/`(2026-08-18〜24) |
 | 機能4 意図翻訳レイヤー | 実装済み | `src/intent_translation/`(2026-08-18〜22)。プロンプトの画面種別対応は `docs/issues/0003` に課題あり |
 | 機能5 ストリーミングモード | **未実装** | 該当コードなし |
+| 複数STTの選択・応答時間の統計・録音の効果音 | 実装済み | `stt.engine` で MAI / Gemini を選択、`src/stt_stats/`、`index.html` の統計タブと Web Audio(2026-10)。Bedrock Voxtral は音声が使えず見送り(`docs/issues/0005`)。設計は `design.md` の「STT応答時間の計測」「効果音」 |
 
 ## 対象機能の一覧
 
