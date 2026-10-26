@@ -18,6 +18,8 @@
         class="px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium">履歴</button>
       <button id="tab-settings" onclick="switchTab('settings')"
         class="px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium">設定</button>
+      <button id="tab-stats" onclick="switchTab('stats')"
+        class="px-4 py-2 rounded bg-gray-700 text-gray-300 font-medium">統計</button>
     </div>
 
     <!-- ステータスバー -->
@@ -75,6 +77,25 @@
         <p id="settings-status" class="text-sm"></p>
       </div>
     </div>
+
+    <!-- 統計タブ -->
+    <div id="panel-stats" class="hidden">
+      <div class="bg-gray-800 rounded p-3">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold">STT応答時間</h2>
+          <div class="flex gap-1">
+            <button id="stats-period-today" onclick="setStatsPeriod('today')"
+              class="px-2 py-0.5 rounded text-xs">今日</button>
+            <button id="stats-period-7d" onclick="setStatsPeriod('7d')"
+              class="px-2 py-0.5 rounded text-xs">7日</button>
+          </div>
+        </div>
+        <div id="stats-stt" class="space-y-3">
+          <p class="text-gray-500">読み込み中...</p>
+        </div>
+        <p class="text-xs text-gray-500 mt-3">時間は成功した送信のみ。応答時間は音声の長さに比例して増えるため、件数と合わせて見てください。</p>
+      </div>
+    </div>
   </div>
 
   <div id="copy-toast"
@@ -84,7 +105,7 @@
 <script>
 // タブ名 -> 表示時に走らせる読み込み処理 (なければ null)。
 // タブが増えても if/else の分岐を足さずに済むよう、一覧で持つ。
-const TABS = { main: null, history: () => loadHistory(), settings: () => loadSettings() };
+const TABS = { main: null, history: () => loadHistory(), settings: () => loadSettings(), stats: () => loadStats() };
 
 function switchTab(tab) {
   const activeClass = 'px-4 py-2 rounded bg-blue-600 text-white font-medium';
@@ -95,6 +116,59 @@ function switchTab(tab) {
     document.getElementById(`panel-${name}`).classList.toggle('hidden', !isActive);
   }
   TABS[tab]?.();
+}
+
+// --- 効果音 (Web Audio の合成音。素材ファイルは使わない) ---
+// 開始=上昇2音、停止=下降2音で、聞き分けられるようにする。
+// 設定 (sound_enabled / sound_volume) は loadedSettings (設定タブを開くと読み込み)
+// ではなく起動時に /api/settings から取り、設定の保存時に更新する。
+let audioCtx = null;
+let soundSettings = { enabled: true, volume: 0.3 };
+let lastRecording = null;
+
+function refreshSoundSettings(settings) {
+  soundSettings = { enabled: settings.sound_enabled, volume: settings.sound_volume };
+}
+
+// 自動再生制限のため、最初のユーザー操作で AudioContext を作って resume() する。
+function unlockAudio() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch {
+    // 音が出せない環境では何もしない
+  }
+}
+document.addEventListener('pointerdown', unlockAudio);
+document.addEventListener('keydown', unlockAudio);
+
+function playTones(frequencies) {
+  if (!soundSettings.enabled || !audioCtx || audioCtx.state !== 'running') return;
+  const noteSec = 0.12;
+  const start = audioCtx.currentTime + 0.01;
+  frequencies.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const t0 = start + i * noteSec;
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    // クリックノイズを避けるため、短いアタックとリリースを付ける
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(soundSettings.volume, t0 + 0.01);
+    gain.gain.linearRampToValueAtTime(0, t0 + noteSec);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + noteSec);
+  });
+}
+
+// status は録音中の再送でも届くため、録音状態が変化したときだけ鳴らす。
+// 初回 (lastRecording が null) は接続直後の現在状態なので鳴らさない。
+function playRecordingSound(recording) {
+  if (lastRecording !== null && recording !== lastRecording) {
+    playTones(recording ? [660, 880] : [880, 550]);
+  }
+  lastRecording = recording;
 }
 
 function updateRecordingUI(recording) {
@@ -453,6 +527,7 @@ function connectSSE() {
   evtSource.addEventListener('status', (e) => {
     const data = JSON.parse(e.data);
     updateRecordingUI(data.recording);
+    playRecordingSound(data.recording);
     if (data.recording) {
       getOrCreateSession(data.session_id, {
         targetPaneId: data.target_pane_id,
@@ -552,17 +627,96 @@ const SETTINGS_FIELDS = [
   { key: 'silence_timeout_sec', label: '無音セッション終了', unit: '秒', step: '1' },
   { key: 'segment_silence_sec', label: '無音区切り (逐次文字起こし)', unit: '秒', step: '0.5' },
   { key: 'vad_threshold', label: '発話判定の閾値', unit: '0〜1', step: '0.05' },
-  { key: 'mai_locale', label: '認識ロケール', unit: '' },
-  { key: 'mai_model_name', label: '認識モデル', unit: '', options: ['MAI-Transcribe-2'] },
-  { key: 'mai_transcribe_style', label: '認識モデル: 出力スタイル', unit: '', options: ['verbatim', 'clean'], optionLabels: { verbatim: 'verbatim (フィラーを含む逐語)', clean: 'clean (フィラー除去)' } },
-  { key: 'mai_timeout_sec', label: '認識タイムアウト', unit: '秒', step: '1' },
   { key: 'proofread_timeout_sec', label: '校正タイムアウト', unit: '秒', step: '1' },
   { key: 'shutdown_delay_sec', label: '終了までの遅延', unit: '秒', step: '0.1' },
   { key: 'sse_keepalive_sec', label: 'SSEキープアライブ間隔', unit: '秒', step: '1' },
+  { key: 'sound_volume', label: '効果音の音量', unit: '0〜1', step: '0.05' },
   { key: 'herdr_slot_count', label: 'Herdr表示ブロック数', unit: '件', step: '1' },
   { key: 'screenshot_monitor_index', label: '意図翻訳: 撮影対象モニタ番号', unit: '', step: '1' },
   { key: 'intent_translation_timeout_sec', label: '意図翻訳タイムアウト', unit: '秒', step: '1' },
 ];
+
+// --- STT 設定 (エンジンごと) ---
+// 入力欄はライブラリのエンジン設定モデルのスキーマ (GET /api/settings/stt-schema)
+// から組み立てる (型・範囲・選択肢・既定値)。ラベル・単位・選択肢の表示名だけ
+// ここで持つ。表に無い項目もキー名のまま表示されるので、ライブラリ側で項目が
+// 増えても入力欄が消えることはない。
+const STT_ENGINE_LABELS = { mai: 'MAI Transcribe', gemini: 'Gemini (Vertex AI)' };
+const STT_FIELD_LABELS = {
+  locale: { label: '認識ロケール' },
+  model_name: { label: '認識モデル' },
+  transcribe_style: {
+    label: '出力スタイル',
+    optionLabels: { verbatim: 'verbatim (フィラーを含む逐語)', clean: 'clean (フィラー除去)' },
+  },
+  location: { label: 'Vertex AI ロケーション' },
+  language_code: { label: '言語コード' },
+  timeout_sec: { label: '認識タイムアウト', unit: '秒' },
+};
+let sttSchemas = null;
+
+// JSON Schema のプロパティ定義から入力種別を決める。
+// enum/const → select、number/integer → number (gt/ge/le は min/max)、他は text。
+function sttFieldSpec(name, prop) {
+  const meta = STT_FIELD_LABELS[name] || {};
+  const spec = { key: name, label: meta.label || name, unit: meta.unit || '', optionLabels: meta.optionLabels };
+  if (prop.enum) {
+    spec.options = prop.enum;
+  } else if (prop.const !== undefined) {
+    spec.options = [prop.const];
+  } else if (prop.type === 'number' || prop.type === 'integer') {
+    spec.step = prop.type === 'integer' ? '1' : 'any';
+    if (prop.minimum !== undefined) spec.min = prop.minimum;
+    // exclusiveMinimum (gt) は min に使えない (0 を許してしまう)。検証はサーバーに任せる。
+    if (prop.maximum !== undefined) spec.max = prop.maximum;
+  }
+  return spec;
+}
+
+function renderSttFields() {
+  const engine = document.getElementById('setting-stt-engine').value;
+  const props = sttSchemas[engine].properties;
+  const current = loadedSettings.stt[engine];
+  const fieldInputClass = 'w-40 bg-gray-900 text-gray-100 text-sm px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500';
+  document.getElementById('stt-engine-fields').innerHTML = Object.entries(props).map(([name, prop]) => {
+    const f = sttFieldSpec(name, prop);
+    const id = `setting-stt-${engine}-${name}`;
+    return `
+    <div class="flex items-center justify-between bg-gray-800 rounded p-3">
+      <label for="${id}" class="text-sm">${escapeHtml(f.label)}</label>
+      <div class="flex items-center gap-2">
+        ${f.options
+          ? `<select id="${id}" data-stt-key="${name}" class="${fieldInputClass}">
+              ${f.options.map(o => `<option value="${escapeAttr(o)}"${current[name] === o ? ' selected' : ''}>${escapeHtml((f.optionLabels && f.optionLabels[o]) || o)}</option>`).join('')}
+            </select>`
+          : `<input id="${id}" data-stt-key="${name}"
+              type="${f.step ? 'number' : 'text'}"${f.step ? ` step="${f.step}"` : ''}${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}
+              value="${escapeAttr(current[name])}"
+              class="${fieldInputClass}">`}
+        <span class="text-xs text-gray-400 w-10">${escapeHtml(f.unit)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// 画面上の編集内容を保ったままエンジンを切り替えられるよう、切替前の
+// エンジンの入力値を loadedSettings に書き戻してから再描画する。
+let renderedSttEngine = null;
+function commitSttFields() {
+  if (!renderedSttEngine) return;
+  const props = sttSchemas[renderedSttEngine].properties;
+  for (const [name, prop] of Object.entries(props)) {
+    const el = document.getElementById(`setting-stt-${renderedSttEngine}-${name}`);
+    if (!el) continue;
+    loadedSettings.stt[renderedSttEngine][name] = (prop.type === 'number' || prop.type === 'integer') ? Number(el.value) : el.value;
+  }
+}
+
+function onSttEngineChange() {
+  commitSttFields();
+  renderSttFields();
+  renderedSttEngine = document.getElementById('setting-stt-engine').value;
+}
 
 // GET のレスポンス全体。PUT は全項目差し替えなので、フォームに出していない
 // 項目 (将来サーバー側だけに追加されたもの) を暗黙にリセットしないよう、
@@ -586,6 +740,33 @@ async function loadSettings() {
     return;
   }
   const fieldInputClass = 'w-40 bg-gray-900 text-gray-100 text-sm px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500';
+  if (!sttSchemas) {
+    try {
+      sttSchemas = await (await fetch('/api/settings/stt-schema')).json();
+    } catch {
+      container.innerHTML = '<p class="text-gray-500">設定の読み込みに失敗しました</p>';
+      return;
+    }
+  }
+  const soundSection = `
+    <div class="flex items-center justify-between bg-gray-800 rounded p-3">
+      <label for="setting-sound-enabled" class="text-sm">効果音 (録音の開始・停止)</label>
+      <div class="flex items-center gap-2">
+        <input id="setting-sound-enabled" type="checkbox"${loadedSettings.sound_enabled ? ' checked' : ''} class="w-4 h-4">
+        <span class="w-10"></span>
+      </div>
+    </div>`;
+  const sttSection = `
+    <div class="flex items-center justify-between bg-gray-800 rounded p-3">
+      <label for="setting-stt-engine" class="text-sm">認識エンジン</label>
+      <div class="flex items-center gap-2">
+        <select id="setting-stt-engine" onchange="onSttEngineChange()" class="${fieldInputClass}">
+          ${Object.keys(sttSchemas).map(e => `<option value="${escapeAttr(e)}"${loadedSettings.stt.engine === e ? ' selected' : ''}>${escapeHtml(STT_ENGINE_LABELS[e] || e)}</option>`).join('')}
+        </select>
+        <span class="w-10"></span>
+      </div>
+    </div>
+    <div id="stt-engine-fields" class="space-y-2"></div>`;
   container.innerHTML = SETTINGS_FIELDS.map(f => `
     <div class="flex items-center justify-between bg-gray-800 rounded p-3">
       <label for="setting-${f.key}" class="text-sm">${escapeHtml(f.label)}</label>
@@ -600,11 +781,17 @@ async function loadSettings() {
               class="${fieldInputClass}">`}
         <span class="text-xs text-gray-400 w-10">${escapeHtml(f.unit)}</span>
       </div>
-    </div>`).join('');
+    </div>`).join('') + soundSection + sttSection;
+  renderedSttEngine = null;
+  renderSttFields();
+  renderedSttEngine = document.getElementById('setting-stt-engine').value;
 }
 
 function collectSettings() {
-  const body = { ...loadedSettings };
+  commitSttFields();
+  const body = { ...loadedSettings, stt: { ...loadedSettings.stt } };
+  body.stt.engine = document.getElementById('setting-stt-engine').value;
+  body.sound_enabled = document.getElementById('setting-sound-enabled').checked;
   for (const field of SETTINGS_FIELDS) {
     const value = document.getElementById(`setting-${field.key}`).value;
     body[field.key] = field.step ? Number(value) : value;
@@ -636,6 +823,7 @@ async function saveSettings() {
     const data = await res.json();
     if (res.ok) {
       loadedSettings = data;
+      refreshSoundSettings(data);
       if (typeof data.herdr_slot_count === 'number' && data.herdr_slot_count > 0) {
         maxBlocks = data.herdr_slot_count;
         syncBlocks();
@@ -649,6 +837,63 @@ async function saveSettings() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// --- 統計タブ ---
+let statsPeriod = 'today';
+
+function setStatsPeriod(period) {
+  statsPeriod = period;
+  loadStats();
+}
+
+function formatSec(value) {
+  return value === null || value === undefined ? '-' : `${value.toFixed(2)}s`;
+}
+
+// 直近サンプルの推移を小さな折れ線で描く (成功した送信のみ)。
+function sparkline(values) {
+  if (values.length < 2) return '';
+  const w = 160, h = 28;
+  const max = Math.max(...values), min = Math.min(...values);
+  const span = max - min || 1;
+  const points = values.map((v, i) => `${(i / (values.length - 1) * w).toFixed(1)},${(h - 2 - (v - min) / span * (h - 4)).toFixed(1)}`).join(' ');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="text-blue-400" aria-label="直近の応答時間の推移"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
+}
+
+async function loadStats() {
+  const container = document.getElementById('stats-stt');
+  const active = 'px-2 py-0.5 rounded text-xs bg-blue-600 text-white';
+  const inactive = 'px-2 py-0.5 rounded text-xs bg-gray-700 text-gray-300';
+  document.getElementById('stats-period-today').className = statsPeriod === 'today' ? active : inactive;
+  document.getElementById('stats-period-7d').className = statsPeriod === '7d' ? active : inactive;
+  let data;
+  try {
+    const res = await fetch(`/api/stats/stt?period=${statsPeriod}`);
+    data = await res.json();
+  } catch {
+    container.innerHTML = '<p class="text-gray-500">統計の読み込みに失敗しました</p>';
+    return;
+  }
+  if (!data.engines.length) {
+    container.innerHTML = '<p class="text-gray-500">この期間の記録はありません</p>';
+    return;
+  }
+  container.innerHTML = data.engines.map(e => `
+    <div class="bg-gray-900 rounded p-3">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-sm font-medium">${escapeHtml(STT_ENGINE_LABELS[e.engine] || e.engine)}${e.engine === data.current_engine ? ' <span class="ml-1 px-1.5 py-0.5 rounded bg-green-700 text-xs">使用中</span>' : ''}</span>
+        ${sparkline(e.recent_sec)}
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center text-xs">
+        <div><div class="text-gray-400">平均</div><div class="text-base">${formatSec(e.mean_sec)}</div></div>
+        <div><div class="text-gray-400">中央値</div><div class="text-base">${formatSec(e.median_sec)}</div></div>
+        <div><div class="text-gray-400">p95</div><div class="text-base">${formatSec(e.p95_sec)}</div></div>
+        <div><div class="text-gray-400">最大</div><div class="text-base">${formatSec(e.max_sec)}</div></div>
+        <div><div class="text-gray-400">件数</div><div class="text-base">${e.count}</div></div>
+        <div><div class="text-gray-400">失敗率</div><div class="text-base">${(e.failure_rate * 100).toFixed(0)}%</div></div>
+      </div>
+    </div>`).join('');
 }
 
 // --- 校正トグル ---
@@ -713,6 +958,7 @@ async function toggleIntentTranslation() {
 
 // 初期化
 updateProofreadUI(isProofreadEnabled());
+fetch('/api/settings').then(r => r.json()).then(refreshSoundSettings).catch(() => {});
 initMaxBlocks();
 connectSSE();
 </script>

@@ -18,13 +18,16 @@ class TestIndex:
         assert "メイン" in html
         assert "履歴" in html
         assert "設定" in html
+        assert "統計" in html
         assert "録音" in html
         assert "tailwindcss" in html
 
 
 # 撮影の有無をサーバー側で判断する必要があるため、汎用フォームではなく
 # 専用トグルボタンで操作する設計 (docs/current/spec.md 参照)。
-_FORM_EXCLUDED_FIELDS = {"intent_translation_enabled"}
+# `sound_enabled` はチェックボックス、`stt` はエンジンごとのスキーマから
+# 組み立てる専用セクションで、いずれも `SETTINGS_FIELDS` の汎用入力欄ではない。
+_FORM_EXCLUDED_FIELDS = {"intent_translation_enabled", "sound_enabled", "stt"}
 
 
 class TestSettingsTabMarkup:
@@ -57,7 +60,7 @@ class TestSettingsTabMarkup:
         assert tabs_literal is not None
         tab_names = re.findall(r"(\w+):", tabs_literal.group(1))
 
-        assert set(tab_names) == {"main", "history", "settings"}
+        assert set(tab_names) == {"main", "history", "settings", "stats"}
         for name in tab_names:
             assert f'id="tab-{name}"' in html
             assert f'id="panel-{name}"' in html
