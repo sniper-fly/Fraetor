@@ -182,7 +182,7 @@ fraetor = "src.__main__:main"
 
 [tool.uv]
 exclude-newer = "14 days"
-exclude-newer-package = { google-genai = "3 days" }
+exclude-newer-package = { google-genai = "3 days", certifi = "1 day" }
 
 [tool.uv.sources]
 fraetor-dictation = { git = "https://github.com/sniper-fly/fraetor-dictation.git", rev = "v0.4.0" }
