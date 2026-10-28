@@ -26,6 +26,12 @@ _ENV_AUDIO_FILE = "FRAETOR_AUDIO_FILE"
 _AUDIO_DIR = Path(__file__).parent / "fixtures" / "audio"
 _E2E_TEST_TIMEOUT_SEC = 60
 
+# 失敗したテストのサーバーログ・STT応答時間の記録の退避先 (gitignore 済み)。
+# pytest の tmp_path は古い実行から順に消えるため、遅延が原因の不安定な失敗を
+# あとから調べられるよう、失敗したテストの分だけここへ残す。
+_ARTIFACTS_DIR = _PROJECT_ROOT / ".e2e-artifacts"
+_SERVER_LOG_NAME = "server.log"
+
 load_dotenv(_PROJECT_ROOT / ".env")
 
 
@@ -36,6 +42,42 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     for item in items:
         item.add_marker(pytest.mark.timeout(_E2E_TEST_TIMEOUT_SEC))
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport]:
+    """各フェーズの結果をテスト項目に残す (fixture の後始末が失敗を判定するため)。"""
+    report = yield
+    setattr(item, f"rep_{report.when}", report)
+    return report
+
+
+@pytest.fixture(autouse=True)
+def _keep_artifacts_on_failure(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Generator[None]:
+    """テストが失敗したとき、サーバーのログと STT 応答時間の記録を退避する。
+
+    サーバーは別プロセスで、ログは通常 pytest の失敗表示にしか残らない。
+    STT の応答時間 (`stt_latency.jsonl`) と合わせて残すことで、失敗が MAI/Gemini
+    の応答遅延によるものか、それ以外かを後から切り分けられる。
+    """
+    yield
+    report = getattr(request.node, "rep_call", None)
+    if report is None or not report.failed:
+        return
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    dest = _ARTIFACTS_DIR / f"{stamp}-{request.node.name}"
+    dest.mkdir(parents=True, exist_ok=True)
+    for source in (
+        tmp_path / _SERVER_LOG_NAME,
+        tmp_path / "history" / "stt_latency.jsonl",
+    ):
+        if source.exists():
+            (dest / source.name).write_bytes(source.read_bytes())
+    (dest / "failure.txt").write_text(str(report.longrepr), encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -111,11 +153,16 @@ def _start_server(
         "FRAETOR_HISTORY_DIR": str(history_dir),
         **extra_env,
     }
-    process = subprocess.Popen(
-        [sys.executable, "-m", module],
-        cwd=_PROJECT_ROOT,
-        env=env,
-    )
+    # サーバーのログはファイルへ出す (失敗時に退避するため)。追記で開くので、
+    # 同一テスト内でサーバーを再起動してもログが失われない。
+    with (tmp_path / _SERVER_LOG_NAME).open("ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, "-m", module],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
     _wait_for_server(process)
     return process
 

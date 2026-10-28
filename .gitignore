@@ -39,3 +39,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 *.log
+
+# E2E 失敗時のサーバーログ・STT応答時間の退避先
+.e2e-artifacts/
