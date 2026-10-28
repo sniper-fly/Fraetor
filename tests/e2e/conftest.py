@@ -47,7 +47,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 @pytest.hookimpl(wrapper=True, tryfirst=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
-) -> Generator[None, pytest.TestReport]:
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
     """各フェーズの結果をテスト項目に残す (fixture の後始末が失敗を判定するため)。"""
     report = yield
     setattr(item, f"rep_{report.when}", report)
