@@ -35,7 +35,9 @@ class TestSttStats:
 
         assert body["current_engine"] == "gemini"
         [mai] = body["engines"]
-        assert (mai["engine"], mai["count"], mai["mean_sec"]) == ("mai", 2, 3.0)
+        assert mai["engine"] == "mai"
+        assert (mai["overall"]["count"], mai["overall"]["mean_sec"]) == (2, 3.0)
+        assert [b["label"] for b in mai["bands"]] == ["3秒未満", "3〜10秒", "10秒以上"]
 
     def test_unknown_period_is_rejected(self, client: TestClient) -> None:
         assert client.get("/api/stats/stt?period=year").status_code == 422

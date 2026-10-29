@@ -93,7 +93,7 @@
         <div id="stats-stt" class="space-y-3">
           <p class="text-gray-500">読み込み中...</p>
         </div>
-        <p class="text-xs text-gray-500 mt-3">時間は成功した送信のみ。応答時間は音声の長さに比例して増えるため、件数と合わせて見てください。</p>
+        <p class="text-xs text-gray-500 mt-3">時間は成功した送信のみ。応答時間の大半は音声の長さによらない固定の遅延なので、同じ長さの行同士で比べてください。「秒/音声秒」は応答時間の合計 ÷ 音声長の合計で、短い発話が多いと大きく出ます。</p>
       </div>
     </div>
   </div>
@@ -861,6 +861,15 @@ function sparkline(values) {
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="text-blue-400" aria-label="直近の応答時間の推移"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
 }
 
+// 帯ごとの1行。サンプルが無い帯は '-' で埋める。
+function statsRow(label, st) {
+  if (!st) {
+    return `<tr class="text-gray-600"><td class="text-left">${escapeHtml(label)}</td><td>0</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>`;
+  }
+  const rtf = st.rtf === null ? '-' : st.rtf.toFixed(2);
+  return `<tr><td class="text-left text-gray-300">${escapeHtml(label)}</td><td>${st.count}</td><td>${formatSec(st.mean_sec)}</td><td>${formatSec(st.p95_sec)}</td><td>${formatSec(st.max_sec)}</td><td>${(st.failure_rate * 100).toFixed(0)}%</td><td>${rtf}</td></tr>`;
+}
+
 async function loadStats() {
   const container = document.getElementById('stats-stt');
   const active = 'px-2 py-0.5 rounded text-xs bg-blue-600 text-white';
@@ -885,14 +894,15 @@ async function loadStats() {
         <span class="text-sm font-medium">${escapeHtml(STT_ENGINE_LABELS[e.engine] || e.engine)}${e.engine === data.current_engine ? ' <span class="ml-1 px-1.5 py-0.5 rounded bg-green-700 text-xs">使用中</span>' : ''}</span>
         ${sparkline(e.recent_sec)}
       </div>
-      <div class="grid grid-cols-3 gap-2 text-center text-xs">
-        <div><div class="text-gray-400">平均</div><div class="text-base">${formatSec(e.mean_sec)}</div></div>
-        <div><div class="text-gray-400">中央値</div><div class="text-base">${formatSec(e.median_sec)}</div></div>
-        <div><div class="text-gray-400">p95</div><div class="text-base">${formatSec(e.p95_sec)}</div></div>
-        <div><div class="text-gray-400">最大</div><div class="text-base">${formatSec(e.max_sec)}</div></div>
-        <div><div class="text-gray-400">件数</div><div class="text-base">${e.count}</div></div>
-        <div><div class="text-gray-400">失敗率</div><div class="text-base">${(e.failure_rate * 100).toFixed(0)}%</div></div>
-      </div>
+      <table class="w-full text-xs text-center">
+        <thead class="text-gray-400">
+          <tr><th class="text-left font-normal">音声の長さ</th><th class="font-normal">件数</th><th class="font-normal">平均</th><th class="font-normal">p95</th><th class="font-normal">最大</th><th class="font-normal">失敗</th><th class="font-normal" title="音声1秒あたりの処理時間 (応答時間の合計 ÷ 音声長の合計)">秒/音声秒</th></tr>
+        </thead>
+        <tbody>
+          ${statsRow('全体', e.overall)}
+          ${e.bands.map(b => statsRow(b.label, b.stats)).join('')}
+        </tbody>
+      </table>
     </div>`).join('');
 }
 
