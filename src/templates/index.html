@@ -30,6 +30,8 @@
           <span id="rec-indicator" class="inline-block w-3 h-3 rounded-full bg-gray-500"></span>
           <span id="rec-label" class="text-sm text-gray-400">停止中</span>
         </div>
+        <button id="sound-locked" class="hidden px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-sm"
+          title="ブラウザの自動再生制限で効果音が止まっています。クリックで有効化">&#x1F507;</button>
         <div class="flex items-center gap-2">
           <span class="text-sm">校正:</span>
           <button id="proofread-toggle" onclick="toggleProofread()"
@@ -128,16 +130,29 @@ let lastRecording = null;
 
 function refreshSoundSettings(settings) {
   soundSettings = { enabled: settings.sound_enabled, volume: settings.sound_volume };
+  updateSoundLockedIndicator();
 }
 
-// 自動再生制限のため、最初のユーザー操作で AudioContext を作って resume() する。
+// 効果音が有効なのに AudioContext が動いていないときだけ 🔇 を出す。
+// 録音はページ外のホットキーで始めるため、表示がないと鳴らない理由に気付けない。
+function updateSoundLockedIndicator() {
+  const locked = soundSettings.enabled && audioCtx?.state !== 'running';
+  document.getElementById('sound-locked').classList.toggle('hidden', !locked);
+}
+
+// 起動時にも resume() を試す (ブラウザが操作なしの再生を許すなら、そこで鳴るようになる)。
+// 許されない場合に備え、最初のユーザー操作でも resume() する。
 function unlockAudio() {
   try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtx.onstatechange = updateSoundLockedIndicator;
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   } catch {
     // 音が出せない環境では何もしない
   }
+  updateSoundLockedIndicator();
 }
 document.addEventListener('pointerdown', unlockAudio);
 document.addEventListener('keydown', unlockAudio);
@@ -969,6 +984,7 @@ async function toggleIntentTranslation() {
 // 初期化
 updateProofreadUI(isProofreadEnabled());
 fetch('/api/settings').then(r => r.json()).then(refreshSoundSettings).catch(() => {});
+unlockAudio();
 initMaxBlocks();
 connectSSE();
 </script>
