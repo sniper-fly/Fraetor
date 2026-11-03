@@ -60,6 +60,10 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
+# 外部ライブラリだが、`src` に `tests` を含むため `tests/dictation/` が残っていると
+# (旧テストの __pycache__ だけ残ったディレクトリでも) ruff が first-party と誤判定し、
+# 環境によって import 順の判定が変わる。ファイルシステムに依存させないため固定する。
+known-third-party = ["dictation"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ARG", "N802", "S", "PLC2401", "PLR2004"]

@@ -21,7 +21,50 @@ _UI_WAIT_MS = 30_000  # Playwright の待機はミリ秒単位
 _SESSION_END_WAIT_SEC = 30.0
 
 
+# 実 Chromium の自動再生ポリシーは起動フラグや利用履歴で変わるため、
+# AudioContext を差し替えて「操作なしで再生を許すか」を決め打ちにする。
+# 許さない場合も、ユーザー操作中 (transient activation) の resume() は通す。
+_FAKE_AUDIO_CONTEXT_SCRIPT = """
+window.AudioContext = class {
+  constructor() { this.state = 'suspended'; this.onstatechange = null; }
+  resume() {
+    if (window.__autoplayAllowed || navigator.userActivation.isActive) {
+      this.state = 'running';
+      this.onstatechange?.();
+    }
+    return Promise.resolve();
+  }
+};
+"""
+
+
 class TestBrowserUi:
+    def test_sound_unlocks_without_interaction_when_autoplay_allowed(
+        self, page: Page, fraetor_server_with_audio: Callable[[str], str]
+    ) -> None:
+        """正常系: 自動再生が許される環境では、ページを操作しなくても 🔇 が出ない。"""
+        page.add_init_script(
+            "window.__autoplayAllowed = true;" + _FAKE_AUDIO_CONTEXT_SCRIPT
+        )
+        page.goto(fraetor_server_with_audio("05_toggle_recording.wav"))
+
+        page.wait_for_function("audioCtx?.state === 'running'", timeout=_UI_WAIT_MS)
+        assert page.locator("#sound-locked").is_hidden()
+
+    def test_sound_locked_indicator_click_unlocks_audio(
+        self, page: Page, fraetor_server_with_audio: Callable[[str], str]
+    ) -> None:
+        """正常系: 自動再生が拒否されると 🔇 が出て、クリックで消えて鳴る状態になる。"""
+        page.add_init_script(_FAKE_AUDIO_CONTEXT_SCRIPT)
+        page.goto(fraetor_server_with_audio("05_toggle_recording.wav"))
+
+        indicator = page.locator("#sound-locked")
+        indicator.wait_for(state="visible", timeout=_UI_WAIT_MS)
+        indicator.click()
+
+        indicator.wait_for(state="hidden", timeout=_UI_WAIT_MS)
+        assert page.evaluate("audioCtx.state") == "running"
+
     def test_recording_toggle_updates_textarea_via_sse(
         self, page: Page, fraetor_server_with_audio: Callable[[str], str]
     ) -> None:
