@@ -1,21 +1,24 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform != 'darwin'",
     "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform != 'darwin'",
-    "python_full_version < '3.14' and sys_platform != 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'darwin'",
+    "python_full_version < '3.14' and sys_platform != 'darwin'",
     "python_full_version < '3.14' and sys_platform == 'darwin'",
 ]
 
 [options]
-exclude-newer = "2026-10-12T15:50:23.622397793Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-google-genai = { timestamp = "2026-10-23T15:50:23.622408798Z", span = "P3D" }
+boto3 = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+botocore = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+certifi = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+google-genai = { timestamp = "0001-01-01T00:00:00Z", span = "P3D" }
 
 [[package]]
 name = "annotated-doc"
@@ -141,16 +144,16 @@ wheels = [
 
 [[package]]
 name = "boto3"
-version = "1.43.93"
+version = "1.43.121"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/37/7a09d8320685b3b8c8a014e392e7595025d00965c46c5f410797905fab7a/boto3-1.43.93.tar.gz", hash = "sha256:196bfc8b4c9cd5505f9f7b963e30956db3a00fd47e20dd0ee3574a243c1fb212", size = 112752, upload-time = "2026-09-11T19:23:03.484Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/50/5c/41fb4571d14c1cfc87543a1e6f491f36f89c1ceac966aeddd61651ee4ba3/boto3-1.43.121.tar.gz", hash = "sha256:0599bdde7d0c03d914d9247b0a328ea48c15b0b3b5fb31a153857fa5bc7a4fd3", size = 112685, upload-time = "2026-10-28T19:19:00.615Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/68/f8f661b9e68daba4f775bfa1e750732ec52fc89b32d55f300aef530e1d62/boto3-1.43.93-py3-none-any.whl", hash = "sha256:3c948fe231490d446bf90bf3322d1452632107329d3683b37d88b7399bf481a0", size = 140022, upload-time = "2026-09-11T19:23:01.995Z" },
+    { url = "https://files.pythonhosted.org/packages/31/57/a5fda6560d519037cc7df6dd116d5d66e7914be2f562e8c7b1ef888161a2/boto3-1.43.121-py3-none-any.whl", hash = "sha256:fc41ea80507416c30a3f7bdea3682124551ec0c36405c0d8149efaf65d9628e7", size = 140041, upload-time = "2026-10-28T19:18:58.973Z" },
 ]
 
 [[package]]
@@ -173,16 +176,16 @@ ssm = [
 
 [[package]]
 name = "botocore"
-version = "1.43.93"
+version = "1.43.121"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/a0/2ce10897323d67dd85de6190fdee159013a75741d1dc48b74d4815ec0592/botocore-1.43.93.tar.gz", hash = "sha256:82da355d18a7f784347b00444be33942834651f31b6c5ffef49999cd47364c5e", size = 16103276, upload-time = "2026-09-11T19:22:58.933Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/98/1a07ef43bc267080b40709eba041fb39353f341401064912935b7e92bc07/botocore-1.43.121.tar.gz", hash = "sha256:69eb571c74ff140cc3a716aed3bc25d09eb7b12de4ea2f990c03785a634f9dcf", size = 16475471, upload-time = "2026-10-28T19:18:54.938Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/7e/f858c401f32d980f924c8f8328b62fab463313834a9ad2326f44613b97ec/botocore-1.43.93-py3-none-any.whl", hash = "sha256:3ca57bb5d26d88b554a74de708a5c991f45306436c91aacca931252d1d4d54ff", size = 15794156, upload-time = "2026-09-11T19:22:55.964Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/a8/5a0730dda5e076588c45c8ce73a56d1fc630accb994bfad0503c6825daf5/botocore-1.43.121-py3-none-any.whl", hash = "sha256:39bfd17e69f3370350e6aac2072df64045d002f9878e09115e85b87c772bd473", size = 16174916, upload-time = "2026-10-28T19:18:52.083Z" },
 ]
 
 [[package]]
@@ -196,11 +199,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.7.22"
+version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz", hash = "sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55", size = 138112, upload-time = "2026-07-22T03:35:12.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz", hash = "sha256:a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd", size = 136225, upload-time = "2026-10-23T11:36:16.478Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl", hash = "sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775", size = 136983, upload-time = "2026-07-22T03:35:11.276Z" },
+    { url = "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl", hash = "sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1", size = 135082, upload-time = "2026-10-23T11:36:14.763Z" },
 ]
 
 [[package]]
@@ -1990,13 +1993,13 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "sys_platform == 'darwin'" },
-    { name = "fsspec", marker = "sys_platform == 'darwin'" },
-    { name = "jinja2", marker = "sys_platform == 'darwin'" },
-    { name = "networkx", marker = "sys_platform == 'darwin'" },
-    { name = "setuptools", marker = "sys_platform == 'darwin'" },
-    { name = "sympy", marker = "sys_platform == 'darwin'" },
-    { name = "typing-extensions", marker = "sys_platform == 'darwin'" },
+    { name = "filelock" },
+    { name = "fsspec" },
+    { name = "jinja2" },
+    { name = "networkx" },
+    { name = "setuptools" },
+    { name = "sympy" },
+    { name = "typing-extensions" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:caf6359d64c0074bcb9f8641a169239118c8165a0a0fef79110c72bfd6474bec", upload-time = "2026-09-02T00:26:15Z" },
@@ -2016,13 +2019,13 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "sys_platform != 'darwin'" },
-    { name = "fsspec", marker = "sys_platform != 'darwin'" },
-    { name = "jinja2", marker = "sys_platform != 'darwin'" },
-    { name = "networkx", marker = "sys_platform != 'darwin'" },
-    { name = "setuptools", marker = "sys_platform != 'darwin'" },
-    { name = "sympy", marker = "sys_platform != 'darwin'" },
-    { name = "typing-extensions", marker = "sys_platform != 'darwin'" },
+    { name = "filelock" },
+    { name = "fsspec" },
+    { name = "jinja2" },
+    { name = "networkx" },
+    { name = "setuptools" },
+    { name = "sympy" },
+    { name = "typing-extensions" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp313-cp313-linux_s390x.whl", hash = "sha256:d87cfff3af33c937b88c9bc6c0dfa17f2156e2599f63447c696f2345928b518a", upload-time = "2026-09-02T18:31:55Z" },
